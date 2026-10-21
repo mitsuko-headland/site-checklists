@@ -61,7 +61,8 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
 .chips{display:flex;gap:8px;flex-wrap:wrap}
 .chip{min-height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:15px}
 .chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
-.trade{margin-top:18px;background:var(--band);color:var(--band-ink);border-radius:10px 10px 0 0;padding:10px 14px;display:flex;justify-content:space-between;gap:10px;font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:.05em;text-transform:uppercase}
+.tsec{margin-top:18px}
+.trade{position:sticky;top:var(--hdr,60px);z-index:3;background:var(--band);color:var(--band-ink);border-radius:10px 10px 0 0;padding:10px 14px;display:flex;justify-content:space-between;gap:10px;font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:.05em;text-transform:uppercase}
 .trade span{font-family:var(--body);font-size:14px;font-weight:500;letter-spacing:0;text-transform:none;opacity:.85}
 .items{background:var(--surface);border:1px solid var(--line);border-top:0;border-radius:0 0 10px 10px}
 .item{display:grid;grid-template-columns:52px 1fr;gap:6px 12px;padding:14px;border-top:1px solid var(--line)}
@@ -150,7 +151,6 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
     <div class="row">
       <button class="btn" type="button" id="refreshBtn">Refresh</button>
       <button class="btn" type="button" id="addToggle">+ Add items</button>
-      <button class="btn" type="button" id="editToggle">Edit list</button>
     </div>
     <div class="panel stack" id="addPanel" hidden>
       <h2>Add items to this checklist</h2>
@@ -187,14 +187,14 @@ const LISTS=[
 const $=id=>document.getElementById(id);
 const el=(tag,props,...kids)=>{const e=document.createElement(tag);if(props)for(const k in props){if(k==='class')e.className=props[k];else if(k==='text')e.textContent=props[k];else if(k.startsWith('on'))e.addEventListener(k.slice(2),props[k]);else e.setAttribute(k,props[k]);}for(const c of kids)if(c!=null)e.append(c);return e;};
 const store={get(k){try{return localStorage.getItem(k);}catch(e){return null;}},set(k,v){try{localStorage.setItem(k,v);}catch(e){}},del(k){try{localStorage.removeItem(k);}catch(e){}}};
-const S={token:store.get('sc.token'),me:null,jobs:[],job:null,data:null,list:null,filter:'all',edit:false,saving:{}};
+const S={token:store.get('sc.token'),me:null,jobs:[],job:null,data:null,list:null,filter:'all',saving:{}};
 let retryFn=null;let pendingJob=JOB_PARAM;
 function call(fn,...args){return new Promise((res,rej)=>google.script.run.withSuccessHandler(res).withFailureHandler(e=>{const m=(e&&e.message)||String(e);if(/AUTH/.test(m))signOut('Please sign in again.');rej(new Error(m));})[fn](...args));}
 function toast(m){const t=$('toast');t.textContent=m;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,2800);}
 function show(v){['vStart','vLogin','vJobs','vLists','vList'].forEach(id=>$(id).hidden=id!==v);$('backBtn').hidden=!(v==='vLists'||v==='vList');window.scrollTo(0,0);}
 const tradeName=t=>String(t||'General').replace(/^\d+\s*-\s*/,'').trim()||'General';
 const isDone=c=>!!(c&&(c.status==='Done'||c.status==='N/A'));
-function header(title,sub){$('brandName').textContent=title;$('sub').textContent=sub;}
+function header(title,sub){$('brandName').textContent=title;$('sub').textContent=sub;if(typeof setHdr==='function')setHdr();}
 /* Shows a load error with a Try again button, and retries once by itself after a few seconds. */
 function failed(msg,fn){show('vStart');const n=$('startMsg');n.className='note err';n.textContent='Could not load: '+msg;retryFn=fn;$('retryBtn').hidden=false;
   clearTimeout(failed.t);failed.t=setTimeout(()=>{if(!$('vStart').hidden&&retryFn)retry();},5000);}
@@ -232,7 +232,7 @@ function renderLists(){const L=$('listList');L.textContent='';
     const meta=el('div',{class:'meta'},document.createTextNode(s.total?(s.done+' of '+s.total+' done  '):'No items yet  '));if(s.crit)meta.append(el('span',{class:'pill hold',text:s.crit+' critical open'}));
     const bar=el('div',{class:'bar'});const fill=el('i');fill.style.width=pct+'%';bar.append(fill);
     L.append(el('button',{class:'walk',type:'button',onclick:()=>openList(w.n)},el('div',{class:'n',text:String(w.n)}),el('div',{},el('b',{text:w.name}),el('div',{class:'meta',text:w.desc})),meta,bar));});}
-function openList(n){S.list=n;S.filter='all';S.edit=false;$('editToggle').textContent='Edit list';$('addPanel').hidden=true;
+function openList(n){S.list=n;S.filter='all';$('addPanel').hidden=true;
   document.querySelectorAll('.chip').forEach(c=>c.setAttribute('aria-pressed',String(c.dataset.f==='all')));renderList();show('vList');}
 
 /* ---------- checklist ---------- */
@@ -241,8 +241,9 @@ function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checkl
   const groups=new Map();items.forEach(i=>{const t=tradeName(i.trade);if(!groups.has(t))groups.set(t,[]);groups.get(t).push(i);});
   const G=$('groups');G.textContent='';let shown=0;
   groups.forEach((list,t)=>{const vis=list.filter(i=>S.filter==='all'||(S.filter==='open'&&!isDone(S.data.checks[i.id]))||(S.filter==='critical'&&i.critical));if(!vis.length)return;shown+=vis.length;
-    const d=list.filter(i=>isDone(S.data.checks[i.id])).length;G.append(el('div',{class:'trade'},document.createTextNode(t),el('span',{text:d+'/'+list.length})));
-    const box=el('div',{class:'items'});vis.forEach(i=>box.append(itemRow(i)));G.append(box);});
+    const d=list.filter(i=>isDone(S.data.checks[i.id])).length;
+    const box=el('div',{class:'items'});vis.forEach(i=>box.append(itemRow(i)));
+    G.append(el('section',{class:'tsec'},el('div',{class:'trade'},document.createTextNode(t),el('span',{text:d+'/'+list.length})),box));});
   if(!items.length)G.append(el('div',{class:'note',text:'No items in this checklist yet. Use "+ Add items" to add some.'}));
   else if(!shown)G.append(el('div',{class:'empty',text:S.filter==='critical'?'No critical items in this checklist.':'Everything in this checklist is done.'}));}
 function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
@@ -253,8 +254,7 @@ function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
   if(tags.childNodes.length)txt.append(tags);row.append(txt);
   if(st)row.append(el('div',{class:'stamp',text:(st==='N/A'?'N/A ':'✓ ')+c.name+' · '+c.at}));
   const side=el('div',{class:'side'});
-  if(S.edit&&S.me&&S.me.admin)side.append(el('button',{class:'link',type:'button',text:'Edit',onclick:()=>openEditor(row,i)}));
-  if(S.edit)side.append(el('button',{class:'link danger',type:'button',text:'Remove from this job',onclick:()=>removeItem(i)}));
+  if(S.me&&S.me.admin)side.append(el('button',{class:'link',type:'button',text:'Edit',onclick:()=>openEditor(row,i)}));
   if(side.childNodes.length)row.append(side);return row;}
 /* Admin editor: wording, trade, area, critical. */
 function openEditor(row,i){if(row.querySelector('.editor'))return;
@@ -262,9 +262,11 @@ function openEditor(row,i){if(row.querySelector('.editor'))return;
   const tp=tradePicker(tradeName(i.trade));const area=el('input',{placeholder:'Area (optional)','aria-label':'Area'});area.value=i.area||'';
   const crit=el('input',{type:'checkbox',style:'width:24px;height:24px;min-height:0'});crit.checked=!!i.critical;
   const save=el('button',{class:'btn primary',type:'button',text:'Save'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});
+  const rm=el('button',{class:'link danger',type:'button',text:'Remove from this job'});
+  rm.onclick=()=>{if(rm.dataset.armed){rm.disabled=true;removeItem(i);return;}rm.dataset.armed='1';rm.textContent='Tap again to remove from this job';setTimeout(()=>{if(rm.isConnected&&!rm.disabled){delete rm.dataset.armed;rm.textContent='Remove from this job';}},4000);};
   const ed=el('div',{class:'editor'},el('label',{class:'f'},document.createTextNode(i.src==='m'?'Wording (changes this item on every job)':'Wording'),ta),
     el('div',{class:'grid2'},el('label',{class:'f'},document.createTextNode('Trade'),tp.el),el('label',{class:'f'},document.createTextNode('Area'),area)),
-    el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),el('div',{class:'row'},save,cancel));
+    el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),el('div',{class:'row'},save,cancel),rm);
   cancel.onclick=()=>ed.remove();
   save.onclick=()=>{const trade=tp.value();if(!ta.value.trim()){toast('The wording cannot be empty');return;}if(!trade){toast('Choose a trade');return;}save.disabled=true;
     call('editItem',S.token,S.job.id,i.id,i.src,{text:ta.value,trade,area:area.value,critical:crit.checked}).then(n=>{toast(n?'Item updated':'No changes');return loadJob();}).catch(x=>{save.disabled=false;toast(x.message);});};
@@ -280,7 +282,9 @@ function setCheck(i,status){if(S.saving[i.id])return;S.saving[i.id]=true;renderL
   call('setCheck',S.token,S.job.id,i.id,i.list,status).then(r=>{S.data.checks[i.id]=r;}).catch(x=>{if(!/AUTH/.test(x.message))toast('Not saved – '+x.message);}).finally(()=>{delete S.saving[i.id];if(S.list)renderList();});}
 function removeItem(i){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{S.data.items=S.data.items.filter(x=>x.id!==i.id);renderList();toast('Removed from this job');}).catch(x=>toast(x.message));}
 document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{S.filter=c.dataset.f;document.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));renderList();}));
-$('editToggle').addEventListener('click',()=>{S.edit=!S.edit;$('editToggle').textContent=S.edit?'Done editing':'Edit list';renderList();});
+/* keep trade headings pinned just under the app header, whatever its height */
+function setHdr(){document.documentElement.style.setProperty('--hdr',document.querySelector('header.top').getBoundingClientRect().height+'px');}
+window.addEventListener('resize',setHdr);setHdr();
 $('addToggle').addEventListener('click',()=>{const p=$('addPanel');p.hidden=!p.hidden;if(!p.hidden){addPicker=null;renderTrades();}});
 $('refreshBtn').addEventListener('click',()=>loadJob().then(()=>toast('Up to date')));
 setInterval(()=>{if(S.list&&S.data&&!document.hidden&&!Object.keys(S.saving).length&&!document.querySelector('.editor')&&$('addPanel').hidden)loadJob();},45000);

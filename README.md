@@ -1,6 +1,6 @@
 # Site Checklists
 
-Mobile site checklists for Headland Construction. Google Apps Script web app backed by the "Site Walks" Google Sheet. People sign in with the name + PIN listed on the sheet's Users tab.
+Mobile site checklists for Headland Construction. Google Apps Script web app backed by the "Site Checklists" Google Sheet. People sign in with the name + PIN listed on the sheet's Users tab.
 
 - `src/Code.gs` – backend (reads/writes the sheet, checks name + PIN sign-in)
 - `src/Index.html` – the app screens

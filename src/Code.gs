@@ -1,6 +1,6 @@
 /**
  * Headland Site Checklists – Google Apps Script backend.
- * Lives in the "Site Walks" Google Sheet; published automatically from GitHub.
+ * Lives in the "Site Checklists" Google Sheet; published automatically from GitHub (mitsuko-headland/site-checklists).
  * Tabs (headers in row 1):
  *   Users      : Name | PIN | Active | Admin
  *   Items      : ItemID | Checklist | Trade | Area | Critical | Item | Division | Order | Active
@@ -16,6 +16,7 @@ const SESSION_DAYS = 30;
 const MAX_FAILS = 5;            // wrong PINs allowed per name …
 const LOCK_MINUTES = 15;        // … before that name is locked for this long
 const CHECKLISTS = 6;           // 1 Project Startup & Site Protection … 6 Finishing
+const SETUP_TEXT_VERSION = '3';  // bump to rewrite the Setup tab after instructions change
 
 /* ---------------- web app entry ---------------- */
 function doGet(e) {
@@ -71,7 +72,7 @@ function withLock_(fn) {
 function setup() { CacheService.getScriptCache().remove('schema'); upgrade_(); return 'Sheet is up to date.'; }
 function upgrade_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('schema') === '2') return;
+  if (cache.get('schema') === '3') return;
   withLock_(() => {
     const ss = SpreadsheetApp.getActive();
     // Users
@@ -120,25 +121,30 @@ function upgrade_() {
       }
       props.setProperty('STARTUP_ITEMS', 'added');
     }
-    if (itemsUpgraded) { try { writeSetupTab_(ss); } catch (e) { /* instructions tab is optional */ } }
-    cache.put('schema', '2', 21600);
+    if (itemsUpgraded || props.getProperty('SETUP_TEXT') !== SETUP_TEXT_VERSION) {
+      try { writeSetupTab_(ss); props.setProperty('SETUP_TEXT', SETUP_TEXT_VERSION); } catch (e) { /* instructions tab is optional */ }
+    }
+    cache.put('schema', '3', 21600);
   });
 }
 function writeSetupTab_(ss) {
   const s = ss.getSheetByName('Setup');
   if (!s) return;
   const lines = ['HEADLAND SITE CHECKLISTS – BACKEND', '',
-    'This Google Sheet is the backend for the Site Checklists app. Keep it private (only you / office admins). The app code is published automatically from GitHub (mitsuko-headland/site-checklists).', '',
+    'This Google Sheet is the backend for the Site Checklists app. Keep it private. The app code lives in GitHub (mitsuko-headland/site-checklists) and is published automatically.', '',
+    'DO NOT RENAME',
+    'Tab names (Users, Items, Jobs, Job Items, Check Log, Edit Log) or the column headings in row 1. The app finds them by name. Renaming the file, reordering columns, formatting, and adding extra columns to the right are all fine.', '',
     'WHO CAN SIGN IN',
-    'People listed on the Users tab, with their Name and PIN. Active = Y to allow, N to block (takes effect immediately). Admin = Y lets that person add items to the master list. A name is locked for 15 minutes after 5 wrong PINs. Sign-ins last 30 days on each phone.', '',
+    'People on the Users tab, with their Name and PIN. Active must start with Y to allow sign-in (blank or N blocks, immediately). Admin starting with Y lets that person add items to the master list and edit any item\'s wording, trade, area and critical flag in the app. A name is locked for 15 minutes after 5 wrong PINs. Sign-ins last 30 days on each phone.', '',
     'CHECKLISTS (the Checklist column on Items)',
     '1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough In · 4 Rough In & Pre-Drywall · 5 Drywall · 6 Finishing', '',
     'TABS',
     'Users – the authorised list (Name | PIN | Active | Admin).',
-    'Items – the master checklist every job uses. Critical = CRITICAL marks a stop-point item. Edit wording here; set Active = N to retire an item. Do not change ItemID.',
+    'Items – the master checklist every job uses. Critical = CRITICAL marks a stop-point item. Set Active = N to retire an item. Do not change ItemID.',
     'Jobs – created from the app. Set Active = N to hide a finished job.',
     'Job Items – items added to (or removed from) a single job from the app. Do not edit by hand.',
-    'Check Log – every tick, untick and N/A, with name and date/time. Never edit or sort; it is the audit trail.'];
+    'Check Log – every tick and untick, with name and date/time. Never edit or sort; it is the audit trail.',
+    'Edit Log – every change admins make to an item in the app: old value, new value, who and when. Created automatically on the first edit.'];
   s.clear();
   s.getRange(1, 1, lines.length, 1).setValues(lines.map(l => [l])).setWrap(true);
   s.getRange(1, 1).setFontSize(14).setFontWeight('bold');
