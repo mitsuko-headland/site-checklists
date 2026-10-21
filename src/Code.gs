@@ -7,6 +7,7 @@
  *   Jobs       : JobID | Job Name | Address | Created By | Created At | Active
  *   Job Items  : JobID | ItemID | Type | Checklist | Trade | Area | Critical | Item | Added By | Added At | Removed
  *   Check Log  : JobID | ItemID | Checklist | Status | Name | Timestamp
+ *   Edit Log   : Timestamp | Name | JobID | ItemID | Field | Old Value | New Value   (created automatically)
  * Older sheets that still say "Walk" / "Hold" are upgraded automatically on first use (see upgrade_).
  */
 
@@ -17,8 +18,11 @@ const LOCK_MINUTES = 15;        // … before that name is locked for this long
 const CHECKLISTS = 6;           // 1 Project Startup & Site Protection … 6 Finishing
 
 /* ---------------- web app entry ---------------- */
-function doGet() {
-  return HtmlService.createHtmlOutputFromFile('Index')
+function doGet(e) {
+  const t = HtmlService.createTemplateFromFile('Index');
+  t.jobParam = String((e && e.parameter && e.parameter.job) || '').replace(/[^A-Za-z0-9]/g, '').slice(0, 40);
+  t.appUrl = ScriptApp.getService().getUrl();
+  return t.evaluate()
     .setTitle('Site Checklists')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover');
 }
@@ -259,6 +263,43 @@ function addItems(token, jobId, scope, rows) {
     }
     return rows.length;
   });
+}
+
+/** Admin only: change an item's wording, trade, area or critical flag. Every change is written to Edit Log. */
+function editItem(token, jobId, itemId, src, changes) {
+  const u = user_(token);
+  if (!u.admin) throw new Error('Only admins can edit items.');
+  changes = changes || {};
+  const text = String(changes.text || '').trim();
+  if (!text) throw new Error('The item wording cannot be empty.');
+  const next = { 'Item': text, 'Trade': String(changes.trade || 'General').trim(), 'Area': String(changes.area || '').trim(), 'Critical': changes.critical ? 'CRITICAL' : '' };
+  return withLock_(() => {
+    const tab = src === 'm' ? 'Items' : 'Job Items';
+    const sh = sheet_(tab);
+    const head = head_(sh);
+    const r = rows_(tab).find(x => String(x['ItemID']) === String(itemId) && (src === 'm' || String(x['JobID']) === String(jobId)));
+    if (!r) throw new Error('That item no longer exists.');
+    ensureEditLog_();
+    const now = new Date();
+    let changed = 0;
+    Object.keys(next).forEach(field => {
+      const col = head.indexOf(field);
+      if (col < 0) return;
+      const old = field === 'Critical' ? (critical_(r[field]) ? 'CRITICAL' : '') : String(r[field] === undefined ? '' : r[field]).trim();
+      if (old === next[field]) return;
+      sh.getRange(r._row, col + 1).setValue(next[field]);
+      append_('Edit Log', { 'Timestamp': now, 'Name': u.name, 'JobID': src === 'm' ? '(all jobs)' : String(jobId), 'ItemID': String(itemId), 'Field': field === 'Item' ? 'Wording' : field, 'Old Value': old, 'New Value': next[field] });
+      changed++;
+    });
+    return changed;
+  });
+}
+function ensureEditLog_() {
+  const ss = SpreadsheetApp.getActive();
+  if (ss.getSheetByName('Edit Log')) return;
+  const sh = ss.insertSheet('Edit Log');
+  sh.appendRow(['Timestamp', 'Name', 'JobID', 'ItemID', 'Field', 'Old Value', 'New Value']);
+  sh.setFrozenRows(1);
 }
 
 /** Removes an item from this job only. Master-list items are hidden for this job, not deleted. */

@@ -82,6 +82,10 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
 .link{background:none;border:0;color:var(--accent);font-weight:600;font-size:14px;padding:6px 0;min-height:32px}
 .link.danger{color:var(--danger)}
 .empty{padding:24px 16px;text-align:center;color:var(--muted)}
+.editor{grid-column:1/-1;display:flex;flex-direction:column;gap:10px;padding-top:8px}
+.editor .row{gap:10px}
+.linkbox{display:flex;gap:8px;flex-wrap:wrap}
+.linkbox input{flex:1;min-width:0;font-size:14px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-weight:600;z-index:20;max-width:calc(100% - 32px)}
 </style>
 </head>
@@ -127,6 +131,11 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
   <section class="view stack" id="vLists" hidden>
     <h1>Choose a checklist</h1>
     <div class="stack" id="listList"><div class="note">Loading…</div></div>
+    <div class="panel stack">
+      <b>Link to this job</b>
+      <div class="linkbox"><input id="jobLink" readonly aria-label="Job link"><button class="btn" type="button" id="copyLink">Copy job link</button></div>
+      <span class="meta">Send this to anyone on the team. It opens this job after they sign in.</span>
+    </div>
   </section>
 
   <section class="view stack" id="vList" hidden>
@@ -146,7 +155,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
     <div class="panel stack" id="addPanel" hidden>
       <h2>Add items to this checklist</h2>
       <div class="grid2">
-        <label class="f">Trade<input id="aTrade" list="tradeList" placeholder="e.g. Plumbing"></label>
+        <label class="f">Trade<span id="aTradeBox"></span></label>
         <label class="f">Area (optional)<input id="aArea" placeholder="e.g. toilets, millwork"></label>
       </div>
       <label class="f">Item(s) – one per line<textarea id="aText" placeholder="Temp drain plugs installed in shower drains&#10;Shut-offs installed on vanity supply lines"></textarea></label>
@@ -163,11 +172,11 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
     </div>
   </section>
 </main>
-<datalist id="tradeList"></datalist>
 <div class="toast" id="toast" hidden></div>
 
 <script>
 (function(){
+const JOB_PARAM='<?= jobParam ?>';const APP_URL='<?= appUrl ?>';
 const LISTS=[
  {n:1,name:'Project Startup & Site Protection',desc:'Signage, site setup and protecting areas outside the scope'},
  {n:2,name:'Demolition',desc:'Demolition and removal'},
@@ -179,7 +188,7 @@ const $=id=>document.getElementById(id);
 const el=(tag,props,...kids)=>{const e=document.createElement(tag);if(props)for(const k in props){if(k==='class')e.className=props[k];else if(k==='text')e.textContent=props[k];else if(k.startsWith('on'))e.addEventListener(k.slice(2),props[k]);else e.setAttribute(k,props[k]);}for(const c of kids)if(c!=null)e.append(c);return e;};
 const store={get(k){try{return localStorage.getItem(k);}catch(e){return null;}},set(k,v){try{localStorage.setItem(k,v);}catch(e){}},del(k){try{localStorage.removeItem(k);}catch(e){}}};
 const S={token:store.get('sc.token'),me:null,jobs:[],job:null,data:null,list:null,filter:'all',edit:false,saving:{}};
-let retryFn=null;
+let retryFn=null;let pendingJob=JOB_PARAM;
 function call(fn,...args){return new Promise((res,rej)=>google.script.run.withSuccessHandler(res).withFailureHandler(e=>{const m=(e&&e.message)||String(e);if(/AUTH/.test(m))signOut('Please sign in again.');rej(new Error(m));})[fn](...args));}
 function toast(m){const t=$('toast');t.textContent=m;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,2800);}
 function show(v){['vStart','vLogin','vJobs','vLists','vList'].forEach(id=>$(id).hidden=id!==v);$('backBtn').hidden=!(v==='vLists'||v==='vList');window.scrollTo(0,0);}
@@ -203,7 +212,7 @@ $('signOut').addEventListener('click',()=>signOut());
 
 /* ---------- jobs ---------- */
 function loadJobs(){show('vJobs');header('Site Checklists','Headland Construction');
-  call('getJobs',S.token).then(j=>{S.jobs=j;renderJobs();const last=store.get('sc.job');if(last&&j.some(x=>x.id===last))openJob(last);}).catch(x=>{if(!/AUTH/.test(x.message))failed(x.message,loadJobs);});}
+  call('getJobs',S.token).then(j=>{S.jobs=j;renderJobs();const want=pendingJob||store.get('sc.job');const fromLink=!!pendingJob;pendingJob='';if(want&&j.some(x=>x.id===want))openJob(want);else if(fromLink)toast('That job link is no longer valid');}).catch(x=>{if(!/AUTH/.test(x.message))failed(x.message,loadJobs);});}
 function renderJobs(){const q=($('jobSearch').value||'').toLowerCase();const L=$('jobList');L.textContent='';
   const jobs=S.jobs.filter(j=>!q||(j.name+' '+j.address).toLowerCase().includes(q));
   if(!jobs.length)L.append(el('div',{class:'note',text:S.jobs.length?'No jobs match that search.':'No jobs yet. Create the first one below – it gets all six checklists from the master list.'}));
@@ -213,7 +222,7 @@ $('newJobForm').addEventListener('submit',e=>{e.preventDefault();call('createJob
 
 /* ---------- one job ---------- */
 function openJob(id){const j=S.jobs.find(x=>x.id===id);store.set('sc.job',id);S.job=j||{id:id,name:'Job',address:''};header(S.job.name,S.job.address||'Choose a checklist');
-  S.data=null;S.list=null;$('listList').textContent='';$('listList').append(el('div',{class:'note',text:'Loading…'}));show('vLists');loadJob();}
+  S.data=null;S.list=null;$('jobLink').value=APP_URL+'?job='+id;$('listList').textContent='';$('listList').append(el('div',{class:'note',text:'Loading…'}));show('vLists');loadJob();}
 function loadJob(){return call('getJob',S.token,S.job.id).then(d=>{S.data=d;S.job=d.job;header(d.job.name,d.job.address||'Choose a checklist');renderTrades();if(S.list)renderList();else renderLists();})
   .catch(x=>{if(/AUTH/.test(x.message))return;if(S.data)toast(x.message);else failed(x.message,()=>openJob(S.job.id));});}
 function itemsFor(n){return S.data?S.data.items.filter(i=>i.list===n).sort((a,b)=>a.order-b.order):[];}
@@ -243,28 +252,55 @@ function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
   if(i.critical)tags.append(el('span',{class:'pill hold',text:'CRITICAL'}));if(i.area)tags.append(el('span',{class:'tag',text:i.area}));if(i.src==='j')tags.append(el('span',{class:'tag extra',text:'this job'}));
   if(tags.childNodes.length)txt.append(tags);row.append(txt);
   if(st)row.append(el('div',{class:'stamp',text:(st==='N/A'?'N/A ':'✓ ')+c.name+' · '+c.at}));
-  const side=el('div',{class:'side'});if(!st)side.append(el('button',{class:'link',type:'button',text:'Mark N/A',onclick:()=>setCheck(i,'N/A')}));
+  const side=el('div',{class:'side'});
+  if(S.edit&&S.me&&S.me.admin)side.append(el('button',{class:'link',type:'button',text:'Edit',onclick:()=>openEditor(row,i)}));
   if(S.edit)side.append(el('button',{class:'link danger',type:'button',text:'Remove from this job',onclick:()=>removeItem(i)}));
   if(side.childNodes.length)row.append(side);return row;}
+/* Admin editor: wording, trade, area, critical. */
+function openEditor(row,i){if(row.querySelector('.editor'))return;
+  const ta=el('textarea',{'aria-label':'Item wording'});ta.value=i.text;
+  const tp=tradePicker(tradeName(i.trade));const area=el('input',{placeholder:'Area (optional)','aria-label':'Area'});area.value=i.area||'';
+  const crit=el('input',{type:'checkbox',style:'width:24px;height:24px;min-height:0'});crit.checked=!!i.critical;
+  const save=el('button',{class:'btn primary',type:'button',text:'Save'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});
+  const ed=el('div',{class:'editor'},el('label',{class:'f'},document.createTextNode(i.src==='m'?'Wording (changes this item on every job)':'Wording'),ta),
+    el('div',{class:'grid2'},el('label',{class:'f'},document.createTextNode('Trade'),tp.el),el('label',{class:'f'},document.createTextNode('Area'),area)),
+    el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),el('div',{class:'row'},save,cancel));
+  cancel.onclick=()=>ed.remove();
+  save.onclick=()=>{const trade=tp.value();if(!ta.value.trim()){toast('The wording cannot be empty');return;}if(!trade){toast('Choose a trade');return;}save.disabled=true;
+    call('editItem',S.token,S.job.id,i.id,i.src,{text:ta.value,trade,area:area.value,critical:crit.checked}).then(n=>{toast(n?'Item updated':'No changes');return loadJob();}).catch(x=>{save.disabled=false;toast(x.message);});};
+  row.append(ed);ta.focus();}
+/* Trade drop-down with "+ Add a new trade…" */
+function allTrades(){return S.data?[...new Set(S.data.items.map(i=>tradeName(i.trade)))].sort():[];}
+function tradePicker(current){const sel=el('select',{'aria-label':'Trade'});const other=el('input',{placeholder:'New trade name','aria-label':'New trade name',hidden:'hidden'});
+  sel.append(el('option',{value:'',text:'Choose a trade'}));allTrades().forEach(t=>sel.append(el('option',{value:t,text:t})));sel.append(el('option',{value:'__new',text:'+ Add a new trade…'}));
+  if(current&&allTrades().includes(current))sel.value=current;
+  sel.addEventListener('change',()=>{other.hidden=sel.value!=='__new';if(!other.hidden)other.focus();});
+  const box=el('span',{class:'stack',style:'gap:8px'},sel,other);return{el:box,value:()=>sel.value==='__new'?other.value.trim():sel.value};}
 function setCheck(i,status){if(S.saving[i.id])return;S.saving[i.id]=true;renderList();
   call('setCheck',S.token,S.job.id,i.id,i.list,status).then(r=>{S.data.checks[i.id]=r;}).catch(x=>{if(!/AUTH/.test(x.message))toast('Not saved – '+x.message);}).finally(()=>{delete S.saving[i.id];if(S.list)renderList();});}
 function removeItem(i){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{S.data.items=S.data.items.filter(x=>x.id!==i.id);renderList();toast('Removed from this job');}).catch(x=>toast(x.message));}
 document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{S.filter=c.dataset.f;document.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));renderList();}));
 $('editToggle').addEventListener('click',()=>{S.edit=!S.edit;$('editToggle').textContent=S.edit?'Done editing':'Edit list';renderList();});
-$('addToggle').addEventListener('click',()=>{const p=$('addPanel');p.hidden=!p.hidden;if(!p.hidden)$('aTrade').focus();});
+$('addToggle').addEventListener('click',()=>{const p=$('addPanel');p.hidden=!p.hidden;if(!p.hidden){addPicker=null;renderTrades();}});
 $('refreshBtn').addEventListener('click',()=>loadJob().then(()=>toast('Up to date')));
-setInterval(()=>{if(S.list&&S.data&&!document.hidden&&!Object.keys(S.saving).length)loadJob();},45000);
+setInterval(()=>{if(S.list&&S.data&&!document.hidden&&!Object.keys(S.saving).length&&!document.querySelector('.editor')&&$('addPanel').hidden)loadJob();},45000);
 
 /* ---------- add items ---------- */
-function renderTrades(){const dl=$('tradeList');dl.textContent='';[...new Set(S.data.items.map(i=>tradeName(i.trade)))].sort().forEach(t=>dl.append(el('option',{value:t})));}
+let addPicker=null;
+function renderTrades(){if(addPicker&&!$('addPanel').hidden)return;const box=$('aTradeBox');const cur=addPicker?addPicker.value():'';addPicker=tradePicker(cur||defaultTrade());box.textContent='';box.append(addPicker.el);}
+function defaultTrade(){const c={};itemsFor(S.list||0).forEach(i=>{const t=tradeName(i.trade);c[t]=(c[t]||0)+1;});return Object.keys(c).sort((a,b)=>c[b]-c[a])[0]||'';}
 function add(rows){return call('addItems',S.token,S.job.id,$('aScope').value,rows).then(n=>{toast(n+' item'+(n>1?'s':'')+' added');return loadJob();}).catch(x=>toast(x.message));}
-$('aSave').addEventListener('click',()=>{const lines=$('aText').value.split('\n').map(s=>s.trim()).filter(Boolean);const trade=$('aTrade').value.trim();
+$('aSave').addEventListener('click',()=>{const lines=$('aText').value.split('\n').map(s=>s.trim()).filter(Boolean);const trade=addPicker?addPicker.value():'';
   if(!lines.length){toast('Type at least one item');return;}if(!trade){toast('Choose a trade');return;}
-  add(lines.map(text=>({list:S.list,trade,area:$('aArea').value.trim(),critical:$('aCrit').checked,text}))).then(()=>{$('aText').value='';});});
+  add(lines.map(text=>({list:S.list,trade,area:$('aArea').value.trim(),critical:$('aCrit').checked,text}))).then(()=>{$('aText').value='';addPicker=null;renderTrades();});});
 function parseCSV(t){const rows=[];let r=[],f='',q=false;for(let i=0;i<t.length;i++){const ch=t[i];if(q){if(ch==='"'){if(t[i+1]==='"'){f+='"';i++;}else q=false;}else f+=ch;}else if(ch==='"')q=true;else if(ch===','){r.push(f);f='';}else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&t[i+1]==='\n')i++;r.push(f);rows.push(r);r=[];f='';}else f+=ch;}if(f||r.length){r.push(f);rows.push(r);}return rows.filter(x=>x.some(c=>c.trim()));}
 $('aFile').addEventListener('change',e=>{const file=e.target.files[0];if(!file)return;const rd=new FileReader();rd.onload=()=>{const rows=parseCSV(String(rd.result));if(rows.length&&/checklist|walk/i.test(rows[0][0]||''))rows.shift();
   const out=rows.map(r=>({list:parseInt(r[0],10),trade:(r[1]||'').trim(),area:(r[2]||'').trim(),critical:/crit|hold/i.test(r[3]||''),text:(r[4]||'').trim()})).filter(r=>r.list>=1&&r.list<=6&&r.text);
   if(!out.length){toast('No valid rows found – check the columns');return;}add(out);e.target.value='';};rd.readAsText(file);});
+
+$('copyLink').addEventListener('click',()=>{const v=$('jobLink').value;const done=()=>toast('Job link copied');
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(v).then(done).catch(()=>{$('jobLink').select();toast('Press and hold the link to copy it');});
+  else{$('jobLink').select();try{document.execCommand('copy');done();}catch(e){toast('Press and hold the link to copy it');}}});
 
 /* ---------- nav + start ---------- */
 $('backBtn').addEventListener('click',()=>{if(!$('vList').hidden){S.list=null;renderLists();show('vLists');}else{store.del('sc.job');S.job=null;loadJobs();}});
