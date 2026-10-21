@@ -88,14 +88,26 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
 <body>
 <header class="top"><div class="wrap">
   <button class="back" id="backBtn" type="button" aria-label="Back" hidden>‹</button>
-  <div class="brand" id="brand"><span id="brandName">Site Walks</span><small id="sub">Headland Construction</small></div>
-  <div class="who" id="who" hidden><span id="whoName"></span></div>
+  <div class="brand" id="brand"><span id="brandName">Site Checklists</span><small id="sub">Headland Construction</small></div>
+  <div class="who" id="who" hidden><span id="whoName"></span><button type="button" id="signOut">Sign out</button></div>
 </div></header>
 
 <main class="wrap">
-  <section class="view stack" id="vLogin">
-    <h1>Site Walks</h1>
-    <div class="note" id="lMsg">Checking your Headland Google sign-in…</div>
+  <section class="view stack" id="vStart">
+    <h1>Site Checklists</h1>
+    <div class="note" id="startMsg">Loading…</div>
+    <button class="btn" type="button" id="retryBtn" hidden>Try again</button>
+  </section>
+
+  <section class="view stack" id="vLogin" hidden>
+    <h1>Sign in</h1>
+    <form class="panel stack" id="loginForm">
+      <label class="f">Your name<input id="lName" autocomplete="username" required placeholder="As listed by the office"></label>
+      <label class="f">PIN<input id="lPin" type="password" inputmode="numeric" autocomplete="current-password" required></label>
+      <button class="btn primary" type="submit" id="lBtn">Sign in</button>
+    </form>
+    <div class="note err" id="lErr" hidden></div>
+    <div class="note">Only people on Headland's authorised list can sign in. Ask the office for a PIN.</div>
   </section>
 
   <section class="view stack" id="vJobs" hidden>
@@ -112,9 +124,9 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
     </details>
   </section>
 
-  <section class="view stack" id="vWalks" hidden>
-    <h1>Choose a walk</h1>
-    <div class="stack" id="walkList"><div class="note">Loading…</div></div>
+  <section class="view stack" id="vLists" hidden>
+    <h1>Choose a checklist</h1>
+    <div class="stack" id="listList"><div class="note">Loading…</div></div>
   </section>
 
   <section class="view stack" id="vList" hidden>
@@ -123,7 +135,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
     <div class="chips" role="group" aria-label="Show">
       <button class="chip" type="button" data-f="all" aria-pressed="true">All</button>
       <button class="chip" type="button" data-f="open" aria-pressed="false">Still to do</button>
-      <button class="chip" type="button" data-f="hold" aria-pressed="false">HOLD items</button>
+      <button class="chip" type="button" data-f="critical" aria-pressed="false">Critical items</button>
     </div>
     <div id="groups"></div>
     <div class="row">
@@ -132,20 +144,20 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
       <button class="btn" type="button" id="editToggle">Edit list</button>
     </div>
     <div class="panel stack" id="addPanel" hidden>
-      <h2>Add items to this walk</h2>
+      <h2>Add items to this checklist</h2>
       <div class="grid2">
         <label class="f">Trade<input id="aTrade" list="tradeList" placeholder="e.g. Plumbing"></label>
         <label class="f">Area (optional)<input id="aArea" placeholder="e.g. toilets, millwork"></label>
       </div>
       <label class="f">Item(s) – one per line<textarea id="aText" placeholder="Temp drain plugs installed in shower drains&#10;Shut-offs installed on vanity supply lines"></textarea></label>
-      <label class="row" style="gap:8px;font-weight:600"><input type="checkbox" id="aHold" style="width:24px;height:24px;min-height:0"> Mark as HOLD</label>
+      <label class="row" style="gap:8px;font-weight:600"><input type="checkbox" id="aCrit" style="width:24px;height:24px;min-height:0"> Mark as critical item</label>
       <label class="f">Add to
         <select id="aScope"><option value="job">This job only</option><option value="all">All jobs (master list – admins)</option></select>
       </label>
       <button class="btn primary" type="button" id="aSave">Add items</button>
       <details>
         <summary><b>Upload a CSV file instead</b></summary>
-        <p class="meta">Columns: <b>Walk, Trade, Area, Hold, Item</b> (Walk = 1–4, Hold = HOLD or blank). Save from Excel or Google Sheets as CSV. Items go where "Add to" is set above.</p>
+        <p class="meta">Columns: <b>Checklist, Trade, Area, Critical, Item</b> (Checklist = 1–6, Critical = CRITICAL or blank). Save from Excel or Google Sheets as CSV. Items go where "Add to" is set above.</p>
         <input type="file" id="aFile" accept=".csv,text/csv">
       </details>
     </div>
@@ -156,92 +168,107 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
 
 <script>
 (function(){
-const WALKS=[{n:1,name:'Pre-Rough In',desc:'Planning & layout before trades rough in'},
- {n:2,name:'Rough In & Pre-Drywall',desc:'Framing, backing, fire blocking, rough-ins, final check before boarding'},
- {n:3,name:'Drywall',desc:'Boarding, mudding, priming'},
- {n:4,name:'Finishing',desc:'Paint, flooring, tile, millwork, fixtures, doors'}];
+const LISTS=[
+ {n:1,name:'Project Startup & Site Protection',desc:'Signage, site setup and protecting areas outside the scope'},
+ {n:2,name:'Demolition',desc:'Demolition and removal'},
+ {n:3,name:'Pre-Rough In',desc:'Planning & layout before trades rough in'},
+ {n:4,name:'Rough In & Pre-Drywall',desc:'Framing, backing, fire blocking, rough-ins, final check before boarding'},
+ {n:5,name:'Drywall',desc:'Boarding, mudding, priming'},
+ {n:6,name:'Finishing',desc:'Paint, flooring, tile, millwork, fixtures, doors'}];
 const $=id=>document.getElementById(id);
 const el=(tag,props,...kids)=>{const e=document.createElement(tag);if(props)for(const k in props){if(k==='class')e.className=props[k];else if(k==='text')e.textContent=props[k];else if(k.startsWith('on'))e.addEventListener(k.slice(2),props[k]);else e.setAttribute(k,props[k]);}for(const c of kids)if(c!=null)e.append(c);return e;};
 const store={get(k){try{return localStorage.getItem(k);}catch(e){return null;}},set(k,v){try{localStorage.setItem(k,v);}catch(e){}},del(k){try{localStorage.removeItem(k);}catch(e){}}};
-const S={token:null,me:null,jobs:[],job:null,data:null,walk:null,filter:'all',edit:false,saving:{}};
-function call(fn,...args){return new Promise((res,rej)=>google.script.run.withSuccessHandler(res).withFailureHandler(e=>{const m=(e&&e.message)||String(e);if(/AUTH|BLOCKED/.test(m)){denied(m);}rej(new Error(m));})[fn](...args));}
+const S={token:store.get('sc.token'),me:null,jobs:[],job:null,data:null,list:null,filter:'all',edit:false,saving:{}};
+let retryFn=null;
+function call(fn,...args){return new Promise((res,rej)=>google.script.run.withSuccessHandler(res).withFailureHandler(e=>{const m=(e&&e.message)||String(e);if(/AUTH/.test(m))signOut('Please sign in again.');rej(new Error(m));})[fn](...args));}
 function toast(m){const t=$('toast');t.textContent=m;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,2800);}
-function show(v){['vLogin','vJobs','vWalks','vList'].forEach(id=>$(id).hidden=id!==v);$('backBtn').hidden=!(v==='vWalks'||v==='vList');window.scrollTo(0,0);}
+function show(v){['vStart','vLogin','vJobs','vLists','vList'].forEach(id=>$(id).hidden=id!==v);$('backBtn').hidden=!(v==='vLists'||v==='vList');window.scrollTo(0,0);}
 const tradeName=t=>String(t||'General').replace(/^\d+\s*-\s*/,'').trim()||'General';
 const isDone=c=>!!(c&&(c.status==='Done'||c.status==='N/A'));
 function header(title,sub){$('brandName').textContent=title;$('sub').textContent=sub;}
+/* Shows a load error with a Try again button, and retries once by itself after a few seconds. */
+function failed(msg,fn){show('vStart');const n=$('startMsg');n.className='note err';n.textContent='Could not load: '+msg;retryFn=fn;$('retryBtn').hidden=false;
+  clearTimeout(failed.t);failed.t=setTimeout(()=>{if(!$('vStart').hidden&&retryFn)retry();},5000);}
+function retry(){const fn=retryFn;retryFn=null;$('retryBtn').hidden=true;const n=$('startMsg');n.className='note';n.textContent='Loading…';if(fn)fn();}
+$('retryBtn').addEventListener('click',retry);
 
-/* ---------- sign in (handled by Google) ---------- */
+/* ---------- sign in ---------- */
+function start(){if(!S.token){show('vLogin');return;}show('vStart');call('whoAmI',S.token).then(signedIn).catch(x=>{if(!/AUTH/.test(x.message))failed(x.message,start);});}
 function signedIn(me){S.me=me;$('whoName').textContent=me.name;$('who').hidden=false;$('aScope').options[1].disabled=!me.admin;loadJobs();}
-function denied(m){show('vLogin');$('who').hidden=true;const n=$('lMsg');n.className='note err';
-  n.textContent=/BLOCKED/.test(m)?'Your access to Site Walks has been turned off. Check with the office.':'Sign in with your @headlandconstruction.com Google account to use Site Walks. If you are signed in with a personal Gmail, switch accounts and open the link again.';}
+function signOut(msg){S.token=null;S.me=null;store.del('sc.token');$('who').hidden=true;header('Site Checklists','Headland Construction');show('vLogin');if(msg){$('lErr').textContent=msg;$('lErr').hidden=false;}}
+$('loginForm').addEventListener('submit',e=>{e.preventDefault();$('lErr').hidden=true;$('lBtn').disabled=true;
+  call('login',$('lName').value,$('lPin').value).then(r=>{S.token=r.token;store.set('sc.token',r.token);$('lPin').value='';signedIn(r);})
+  .catch(x=>{if(!/AUTH/.test(x.message)){$('lErr').textContent=x.message;$('lErr').hidden=false;}}).finally(()=>$('lBtn').disabled=false);});
+$('signOut').addEventListener('click',()=>signOut());
 
 /* ---------- jobs ---------- */
-function loadJobs(){show('vJobs');header('Site Walks','Headland Construction');call('getJobs',S.token).then(j=>{S.jobs=j;renderJobs();const last=store.get('sw.job');if(last&&j.some(x=>x.id===last))openJob(last);}).catch(x=>toast(x.message));}
+function loadJobs(){show('vJobs');header('Site Checklists','Headland Construction');
+  call('getJobs',S.token).then(j=>{S.jobs=j;renderJobs();const last=store.get('sc.job');if(last&&j.some(x=>x.id===last))openJob(last);}).catch(x=>{if(!/AUTH/.test(x.message))failed(x.message,loadJobs);});}
 function renderJobs(){const q=($('jobSearch').value||'').toLowerCase();const L=$('jobList');L.textContent='';
   const jobs=S.jobs.filter(j=>!q||(j.name+' '+j.address).toLowerCase().includes(q));
-  if(!jobs.length)L.append(el('div',{class:'note',text:S.jobs.length?'No jobs match that search.':'No jobs yet. Create the first one below – it gets all four walks from the master list.'}));
+  if(!jobs.length)L.append(el('div',{class:'note',text:S.jobs.length?'No jobs match that search.':'No jobs yet. Create the first one below – it gets all six checklists from the master list.'}));
   jobs.forEach(j=>L.append(el('button',{class:'job',type:'button',onclick:()=>openJob(j.id)},el('b',{text:j.name}),el('span',{text:j.address||'No address'}))));}
 $('jobSearch').addEventListener('input',renderJobs);
 $('newJobForm').addEventListener('submit',e=>{e.preventDefault();call('createJob',S.token,$('njName').value,$('njAddr').value).then(j=>{$('newJobForm').reset();$('newJobPanel').open=false;toast('Job created');S.jobs.unshift(j);openJob(j.id);}).catch(x=>toast(x.message));});
 
 /* ---------- one job ---------- */
-function openJob(id){const j=S.jobs.find(x=>x.id===id);store.set('sw.job',id);S.job=j||{id:id,name:'Job',address:''};header(S.job.name,S.job.address||'Choose a walk');
-  S.data=null;S.walk=null;$('walkList').textContent='';$('walkList').append(el('div',{class:'note',text:'Loading…'}));show('vWalks');loadJob();}
-function loadJob(){return call('getJob',S.token,S.job.id).then(d=>{S.data=d;S.job=d.job;header(d.job.name,d.job.address||'Choose a walk');renderTrades();if(S.walk)renderList();else renderWalks();}).catch(x=>toast(x.message));}
-function itemsFor(n){return S.data?S.data.items.filter(i=>i.walk===n).sort((a,b)=>a.order-b.order):[];}
-function stat(n){const it=itemsFor(n);let done=0,holds=0;it.forEach(i=>{if(isDone(S.data.checks[i.id]))done++;else if(i.hold)holds++;});return{total:it.length,done,holds};}
-function renderWalks(){const L=$('walkList');L.textContent='';
-  WALKS.forEach(w=>{const s=stat(w.n);const pct=s.total?Math.round(s.done/s.total*100):0;
-    const meta=el('div',{class:'meta'},document.createTextNode(s.done+' of '+s.total+' done  '));if(s.holds)meta.append(el('span',{class:'pill hold',text:s.holds+' HOLD open'}));
+function openJob(id){const j=S.jobs.find(x=>x.id===id);store.set('sc.job',id);S.job=j||{id:id,name:'Job',address:''};header(S.job.name,S.job.address||'Choose a checklist');
+  S.data=null;S.list=null;$('listList').textContent='';$('listList').append(el('div',{class:'note',text:'Loading…'}));show('vLists');loadJob();}
+function loadJob(){return call('getJob',S.token,S.job.id).then(d=>{S.data=d;S.job=d.job;header(d.job.name,d.job.address||'Choose a checklist');renderTrades();if(S.list)renderList();else renderLists();})
+  .catch(x=>{if(/AUTH/.test(x.message))return;if(S.data)toast(x.message);else failed(x.message,()=>openJob(S.job.id));});}
+function itemsFor(n){return S.data?S.data.items.filter(i=>i.list===n).sort((a,b)=>a.order-b.order):[];}
+function stat(n){const it=itemsFor(n);let done=0,crit=0;it.forEach(i=>{if(isDone(S.data.checks[i.id]))done++;else if(i.critical)crit++;});return{total:it.length,done,crit};}
+function renderLists(){const L=$('listList');L.textContent='';
+  LISTS.forEach(w=>{const s=stat(w.n);const pct=s.total?Math.round(s.done/s.total*100):0;
+    const meta=el('div',{class:'meta'},document.createTextNode(s.total?(s.done+' of '+s.total+' done  '):'No items yet  '));if(s.crit)meta.append(el('span',{class:'pill hold',text:s.crit+' critical open'}));
     const bar=el('div',{class:'bar'});const fill=el('i');fill.style.width=pct+'%';bar.append(fill);
-    L.append(el('button',{class:'walk',type:'button',onclick:()=>openWalk(w.n)},el('div',{class:'n',text:String(w.n)}),el('div',{},el('b',{text:w.name}),el('div',{class:'meta',text:w.desc})),meta,bar));});}
-function openWalk(n){S.walk=n;S.filter='all';S.edit=false;$('editToggle').textContent='Edit list';$('addPanel').hidden=true;
+    L.append(el('button',{class:'walk',type:'button',onclick:()=>openList(w.n)},el('div',{class:'n',text:String(w.n)}),el('div',{},el('b',{text:w.name}),el('div',{class:'meta',text:w.desc})),meta,bar));});}
+function openList(n){S.list=n;S.filter='all';S.edit=false;$('editToggle').textContent='Edit list';$('addPanel').hidden=true;
   document.querySelectorAll('.chip').forEach(c=>c.setAttribute('aria-pressed',String(c.dataset.f==='all')));renderList();show('vList');}
 
 /* ---------- checklist ---------- */
-function renderList(){const w=WALKS[S.walk-1];$('listTitle').textContent='Walk '+w.n+' – '+w.name;
-  const items=itemsFor(S.walk),s=stat(S.walk),sum=$('summary');sum.textContent='';sum.append(el('b',{text:s.done+' of '+s.total+' done'}));if(s.holds)sum.append(el('span',{class:'pill hold',text:s.holds+' HOLD open'}));
+function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checklist '+w.n+' – '+w.name;
+  const items=itemsFor(S.list),s=stat(S.list),sum=$('summary');sum.textContent='';sum.append(el('b',{text:s.done+' of '+s.total+' done'}));if(s.crit)sum.append(el('span',{class:'pill hold',text:s.crit+' critical open'}));
   const groups=new Map();items.forEach(i=>{const t=tradeName(i.trade);if(!groups.has(t))groups.set(t,[]);groups.get(t).push(i);});
   const G=$('groups');G.textContent='';let shown=0;
-  groups.forEach((list,t)=>{const vis=list.filter(i=>S.filter==='all'||(S.filter==='open'&&!isDone(S.data.checks[i.id]))||(S.filter==='hold'&&i.hold));if(!vis.length)return;shown+=vis.length;
+  groups.forEach((list,t)=>{const vis=list.filter(i=>S.filter==='all'||(S.filter==='open'&&!isDone(S.data.checks[i.id]))||(S.filter==='critical'&&i.critical));if(!vis.length)return;shown+=vis.length;
     const d=list.filter(i=>isDone(S.data.checks[i.id])).length;G.append(el('div',{class:'trade'},document.createTextNode(t),el('span',{text:d+'/'+list.length})));
     const box=el('div',{class:'items'});vis.forEach(i=>box.append(itemRow(i)));G.append(box);});
-  if(!items.length)G.append(el('div',{class:'note',text:'No items in this walk yet. Use "+ Add items" to add some.'}));
-  else if(!shown)G.append(el('div',{class:'empty',text:S.filter==='hold'?'No HOLD items in this walk.':'Everything in this walk is done.'}));}
+  if(!items.length)G.append(el('div',{class:'note',text:'No items in this checklist yet. Use "+ Add items" to add some.'}));
+  else if(!shown)G.append(el('div',{class:'empty',text:S.filter==='critical'?'No critical items in this checklist.':'Everything in this checklist is done.'}));}
 function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
-  const row=el('div',{class:'item'+(i.hold?' isHold':'')+(st==='Done'?' done':'')+(st==='N/A'?' na':'')+(S.saving[i.id]?' saving':'')});
+  const row=el('div',{class:'item'+(i.critical?' isHold':'')+(st==='Done'?' done':'')+(st==='N/A'?' na':'')+(S.saving[i.id]?' saving':'')});
   row.append(el('button',{class:'tick',type:'button','aria-label':st?'Clear':'Mark done','aria-pressed':String(st==='Done'),text:st==='Done'?'✓':(st==='N/A'?'N/A':''),onclick:()=>setCheck(i,st?'Cleared':'Done')}));
   const txt=el('div',{class:'txt'},document.createTextNode(i.text));const tags=el('div',{class:'tags'});
-  if(i.hold)tags.append(el('span',{class:'pill hold',text:'HOLD'}));if(i.area)tags.append(el('span',{class:'tag',text:i.area}));if(i.src==='j')tags.append(el('span',{class:'tag extra',text:'this job'}));
+  if(i.critical)tags.append(el('span',{class:'pill hold',text:'CRITICAL'}));if(i.area)tags.append(el('span',{class:'tag',text:i.area}));if(i.src==='j')tags.append(el('span',{class:'tag extra',text:'this job'}));
   if(tags.childNodes.length)txt.append(tags);row.append(txt);
   if(st)row.append(el('div',{class:'stamp',text:(st==='N/A'?'N/A ':'✓ ')+c.name+' · '+c.at}));
   const side=el('div',{class:'side'});if(!st)side.append(el('button',{class:'link',type:'button',text:'Mark N/A',onclick:()=>setCheck(i,'N/A')}));
   if(S.edit)side.append(el('button',{class:'link danger',type:'button',text:'Remove from this job',onclick:()=>removeItem(i)}));
   if(side.childNodes.length)row.append(side);return row;}
 function setCheck(i,status){if(S.saving[i.id])return;S.saving[i.id]=true;renderList();
-  call('setCheck',S.token,S.job.id,i.id,i.walk,status).then(r=>{S.data.checks[i.id]=r;}).catch(x=>toast('Not saved – '+x.message)).finally(()=>{delete S.saving[i.id];renderList();});}
-function removeItem(i){call('removeItem',S.token,S.job.id,i.id,i.src,i.walk).then(()=>{S.data.items=S.data.items.filter(x=>x.id!==i.id);renderList();toast('Removed from this job');}).catch(x=>toast(x.message));}
+  call('setCheck',S.token,S.job.id,i.id,i.list,status).then(r=>{S.data.checks[i.id]=r;}).catch(x=>{if(!/AUTH/.test(x.message))toast('Not saved – '+x.message);}).finally(()=>{delete S.saving[i.id];if(S.list)renderList();});}
+function removeItem(i){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{S.data.items=S.data.items.filter(x=>x.id!==i.id);renderList();toast('Removed from this job');}).catch(x=>toast(x.message));}
 document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{S.filter=c.dataset.f;document.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));renderList();}));
 $('editToggle').addEventListener('click',()=>{S.edit=!S.edit;$('editToggle').textContent=S.edit?'Done editing':'Edit list';renderList();});
 $('addToggle').addEventListener('click',()=>{const p=$('addPanel');p.hidden=!p.hidden;if(!p.hidden)$('aTrade').focus();});
 $('refreshBtn').addEventListener('click',()=>loadJob().then(()=>toast('Up to date')));
-setInterval(()=>{if(S.walk&&!document.hidden&&!Object.keys(S.saving).length)loadJob();},45000);
+setInterval(()=>{if(S.list&&S.data&&!document.hidden&&!Object.keys(S.saving).length)loadJob();},45000);
 
 /* ---------- add items ---------- */
 function renderTrades(){const dl=$('tradeList');dl.textContent='';[...new Set(S.data.items.map(i=>tradeName(i.trade)))].sort().forEach(t=>dl.append(el('option',{value:t})));}
 function add(rows){return call('addItems',S.token,S.job.id,$('aScope').value,rows).then(n=>{toast(n+' item'+(n>1?'s':'')+' added');return loadJob();}).catch(x=>toast(x.message));}
 $('aSave').addEventListener('click',()=>{const lines=$('aText').value.split('\n').map(s=>s.trim()).filter(Boolean);const trade=$('aTrade').value.trim();
   if(!lines.length){toast('Type at least one item');return;}if(!trade){toast('Choose a trade');return;}
-  add(lines.map(text=>({walk:S.walk,trade,area:$('aArea').value.trim(),hold:$('aHold').checked,text}))).then(()=>{$('aText').value='';});});
+  add(lines.map(text=>({list:S.list,trade,area:$('aArea').value.trim(),critical:$('aCrit').checked,text}))).then(()=>{$('aText').value='';});});
 function parseCSV(t){const rows=[];let r=[],f='',q=false;for(let i=0;i<t.length;i++){const ch=t[i];if(q){if(ch==='"'){if(t[i+1]==='"'){f+='"';i++;}else q=false;}else f+=ch;}else if(ch==='"')q=true;else if(ch===','){r.push(f);f='';}else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&t[i+1]==='\n')i++;r.push(f);rows.push(r);r=[];f='';}else f+=ch;}if(f||r.length){r.push(f);rows.push(r);}return rows.filter(x=>x.some(c=>c.trim()));}
-$('aFile').addEventListener('change',e=>{const file=e.target.files[0];if(!file)return;const rd=new FileReader();rd.onload=()=>{const rows=parseCSV(String(rd.result));if(rows.length&&/walk/i.test(rows[0][0]||''))rows.shift();
-  const out=rows.map(r=>({walk:parseInt(r[0],10),trade:(r[1]||'').trim(),area:(r[2]||'').trim(),hold:/hold/i.test(r[3]||''),text:(r[4]||'').trim()})).filter(r=>r.walk>=1&&r.walk<=4&&r.text);
+$('aFile').addEventListener('change',e=>{const file=e.target.files[0];if(!file)return;const rd=new FileReader();rd.onload=()=>{const rows=parseCSV(String(rd.result));if(rows.length&&/checklist|walk/i.test(rows[0][0]||''))rows.shift();
+  const out=rows.map(r=>({list:parseInt(r[0],10),trade:(r[1]||'').trim(),area:(r[2]||'').trim(),critical:/crit|hold/i.test(r[3]||''),text:(r[4]||'').trim()})).filter(r=>r.list>=1&&r.list<=6&&r.text);
   if(!out.length){toast('No valid rows found – check the columns');return;}add(out);e.target.value='';};rd.readAsText(file);});
 
 /* ---------- nav + start ---------- */
-$('backBtn').addEventListener('click',()=>{if(!$('vList').hidden){S.walk=null;renderWalks();show('vWalks');}else{store.del('sw.job');S.job=null;loadJobs();}});
-call('whoAmI').then(signedIn).catch(x=>{if(!/AUTH|BLOCKED/.test(x.message)){$('lMsg').className='note err';$('lMsg').textContent='Could not load Site Walks: '+x.message;}});
+$('backBtn').addEventListener('click',()=>{if(!$('vList').hidden){S.list=null;renderLists();show('vLists');}else{store.del('sc.job');S.job=null;loadJobs();}});
+start();
 })();
 </script>
 </body>

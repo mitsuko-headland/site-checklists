@@ -1,21 +1,25 @@
 /**
- * Headland Site Walks – Google Apps Script backend.
- * Paste this into Code.gs in the Apps Script editor of the "Site Walks" Google Sheet.
- * The sheet must have these tabs (headers in row 1):
- *   Users      : Name | Email | Active | Admin   (optional – see sign-in notes below)
- *   Items      : ItemID | Walk | Trade | Area | Hold | Item | Division | Order | Active
+ * Headland Site Checklists – Google Apps Script backend.
+ * Lives in the "Site Walks" Google Sheet; published automatically from GitHub.
+ * Tabs (headers in row 1):
+ *   Users      : Name | PIN | Active | Admin
+ *   Items      : ItemID | Checklist | Trade | Area | Critical | Item | Division | Order | Active
  *   Jobs       : JobID | Job Name | Address | Created By | Created At | Active
- *   Job Items  : JobID | ItemID | Type | Walk | Trade | Area | Hold | Item | Added By | Added At | Removed
- *   Check Log  : JobID | ItemID | Walk | Status | Name | Timestamp
+ *   Job Items  : JobID | ItemID | Type | Checklist | Trade | Area | Critical | Item | Added By | Added At | Removed
+ *   Check Log  : JobID | ItemID | Checklist | Status | Name | Timestamp
+ * Older sheets that still say "Walk" / "Hold" are upgraded automatically on first use (see upgrade_).
  */
 
 const TZ = 'America/Vancouver';
-const DOMAIN = 'headlandconstruction.com';   // only Google accounts on this domain can use the app
+const SESSION_DAYS = 30;
+const MAX_FAILS = 5;            // wrong PINs allowed per name …
+const LOCK_MINUTES = 15;        // … before that name is locked for this long
+const CHECKLISTS = 6;           // 1 Project Startup & Site Protection … 6 Finishing
 
 /* ---------------- web app entry ---------------- */
 function doGet() {
   return HtmlService.createHtmlOutputFromFile('Index')
-    .setTitle('Headland Site Walks')
+    .setTitle('Site Checklists')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, viewport-fit=cover');
 }
 
@@ -25,7 +29,9 @@ function sheet_(name) {
   if (!sh) throw new Error('Missing tab "' + name + '" in the Google Sheet.');
   return sh;
 }
+function head_(sh) { return sh.getRange(1, 1, 1, Math.max(1, sh.getLastColumn())).getValues()[0].map(h => String(h).trim()); }
 function rows_(name) {
+  upgrade_();
   const sh = sheet_(name);
   const values = sh.getDataRange().getValues();
   const head = values.shift().map(h => String(h).trim());
@@ -35,38 +41,152 @@ function rows_(name) {
 }
 function append_(name, obj) {
   const sh = sheet_(name);
-  const head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(h => String(h).trim());
-  sh.appendRow(head.map(h => (obj[h] === undefined ? '' : obj[h])));
+  sh.appendRow(head_(sh).map(h => (obj[h] === undefined ? '' : obj[h])));
 }
 function yes_(v) { return String(v).trim().toUpperCase().startsWith('Y'); }
+function critical_(v) { return /CRIT|HOLD|^Y/i.test(String(v || '').trim()); }
 function fmt_(d) { return d instanceof Date ? Utilities.formatDate(d, TZ, 'MMM d, h:mm a') : String(d || ''); }
 function newId_(prefix) { return prefix + Date.now().toString(36).toUpperCase() + Math.floor(Math.random() * 1296).toString(36).toUpperCase(); }
+let inLock_ = false;              // the script lock is taken once per request; nested calls reuse it
 function withLock_(fn) {
+  if (inLock_) return fn();
   const lock = LockService.getScriptLock();
   lock.waitLock(20000);
-  try { return fn(); } finally { lock.releaseLock(); }
+  inLock_ = true;
+  try { return fn(); } finally { inLock_ = false; lock.releaseLock(); }
 }
 
-/* ---------------- sign-in (Google account) ----------------
- * Deploy as: Execute as "Me", Who has access "Anyone within headlandconstruction.com".
- * Google signs the person in; this script only checks the email domain and the Users tab.
- * Anyone with a Headland email can use it. The Users tab is optional and is used to:
- *   - give someone a display name (otherwise it is made from their email, e.g. jane.doe -> Jane Doe)
- *   - block someone (Active = N)
- *   - make someone an admin (Admin = Y) so they can add items to the master list
+/* ---------------- one-time sheet upgrade ----------------
+ * Runs automatically the first time the new version is used (or run setup() from the editor).
+ *  - Users: makes sure Name | PIN | Active | Admin columns exist.
+ *  - Items / Job Items / Check Log: renames Walk -> Checklist and Hold -> Critical,
+ *    shifts existing checklist numbers 1-4 to 3-6 (two new checklists go first),
+ *    and adds the Project Startup & Site Protection items.
+ * Safe to run more than once: it only upgrades a tab that still has a "Walk" column.
  */
-function user_() {
-  const email = String(Session.getActiveUser().getEmail() || '').trim().toLowerCase();
-  if (!email || !email.endsWith('@' + DOMAIN)) throw new Error('AUTH');
-  const row = rows_('Users').find(r => String(r['Email']).trim().toLowerCase() === email);
-  if (row && String(row['Active']).trim() && !yes_(row['Active'])) throw new Error('BLOCKED');
-  const owner = String(Session.getEffectiveUser().getEmail() || '').trim().toLowerCase();
-  const name = (row && String(row['Name']).trim()) || email.split('@')[0].split(/[._-]+/).filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
-  return { email: email, name: name, admin: email === owner || !!(row && yes_(row['Admin'])) };
+function setup() { CacheService.getScriptCache().remove('schema'); upgrade_(); return 'Sheet is up to date.'; }
+function upgrade_() {
+  const cache = CacheService.getScriptCache();
+  if (cache.get('schema') === '2') return;
+  withLock_(() => {
+    const ss = SpreadsheetApp.getActive();
+    // Users
+    const us = ss.getSheetByName('Users');
+    if (us) {
+      const h = head_(us).filter(Boolean);
+      if (!h.length) us.getRange(1, 1, 1, 4).setValues([['Name', 'PIN', 'Active', 'Admin']]);
+      else ['Name', 'PIN', 'Active', 'Admin'].forEach(c => { if (h.indexOf(c) < 0) { us.getRange(1, us.getLastColumn() + 1).setValue(c); h.push(c); } });
+      const pinCol = head_(us).indexOf('PIN') + 1;
+      if (pinCol > 0) us.getRange(1, pinCol, us.getMaxRows(), 1).setNumberFormat('@');
+    }
+    // Items, Job Items, Check Log
+    let itemsUpgraded = false;
+    ['Items', 'Job Items', 'Check Log'].forEach(name => {
+      const sh = ss.getSheetByName(name);
+      if (!sh) return;
+      const h = head_(sh);
+      const w = h.indexOf('Walk');
+      if (w < 0) return;                                  // already upgraded
+      sh.getRange(1, w + 1).setValue('Checklist');
+      const hc = h.indexOf('Hold');
+      if (hc >= 0) sh.getRange(1, hc + 1).setValue('Critical');
+      const n = sh.getLastRow() - 1;
+      if (n > 0) {
+        const col = sh.getRange(2, w + 1, n, 1);
+        col.setValues(col.getValues().map(r => [r[0] === '' || isNaN(Number(r[0])) ? r[0] : Number(r[0]) + 2]));
+        if (hc >= 0) {
+          const cc = sh.getRange(2, hc + 1, n, 1);
+          cc.setValues(cc.getValues().map(r => [critical_(r[0]) ? 'CRITICAL' : '']));
+        }
+      }
+      if (name === 'Items') itemsUpgraded = true;
+    });
+    // Startup items: added once (tracked by a script property, so a failed run simply retries).
+    const props = PropertiesService.getScriptProperties();
+    const sh = ss.getSheetByName('Items');
+    if (sh && !props.getProperty('STARTUP_ITEMS') && head_(sh).indexOf('Checklist') >= 0) {
+      const hd = head_(sh);
+      const ids = sh.getLastRow() > 1 ? sh.getRange(2, hd.indexOf('ItemID') + 1, sh.getLastRow() - 1, 1).getValues().map(r => String(r[0])) : [];
+      if (ids.indexOf('S001') < 0) {
+        const orderCol = hd.indexOf('Order');
+        let order = 0;
+        if (orderCol >= 0 && sh.getLastRow() > 1) order = Math.max(0, ...sh.getRange(2, orderCol + 1, sh.getLastRow() - 1, 1).getValues().map(r => Number(r[0]) || 0));
+        ['Site signage', 'Trade rules signage posted', 'Garbage bins, brooms, garbage bags, ladders, etc. on site', 'Areas outside the scope protected for demolition and work']
+          .forEach((t, i) => sh.appendRow(hd.map(c => ({ 'ItemID': 'S' + String(i + 1).padStart(3, '0'), 'Checklist': 1, 'Trade': 'Site Supervisor', 'Area': '', 'Critical': '', 'Item': t, 'Division': 'Div 01 General', 'Order': order + i + 1, 'Active': 'Y' })[c] ?? '')));
+      }
+      props.setProperty('STARTUP_ITEMS', 'added');
+    }
+    if (itemsUpgraded) { try { writeSetupTab_(ss); } catch (e) { /* instructions tab is optional */ } }
+    cache.put('schema', '2', 21600);
+  });
+}
+function writeSetupTab_(ss) {
+  const s = ss.getSheetByName('Setup');
+  if (!s) return;
+  const lines = ['HEADLAND SITE CHECKLISTS – BACKEND', '',
+    'This Google Sheet is the backend for the Site Checklists app. Keep it private (only you / office admins). The app code is published automatically from GitHub (mitsuko-headland/site-checklists).', '',
+    'WHO CAN SIGN IN',
+    'People listed on the Users tab, with their Name and PIN. Active = Y to allow, N to block (takes effect immediately). Admin = Y lets that person add items to the master list. A name is locked for 15 minutes after 5 wrong PINs. Sign-ins last 30 days on each phone.', '',
+    'CHECKLISTS (the Checklist column on Items)',
+    '1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough In · 4 Rough In & Pre-Drywall · 5 Drywall · 6 Finishing', '',
+    'TABS',
+    'Users – the authorised list (Name | PIN | Active | Admin).',
+    'Items – the master checklist every job uses. Critical = CRITICAL marks a stop-point item. Edit wording here; set Active = N to retire an item. Do not change ItemID.',
+    'Jobs – created from the app. Set Active = N to hide a finished job.',
+    'Job Items – items added to (or removed from) a single job from the app. Do not edit by hand.',
+    'Check Log – every tick, untick and N/A, with name and date/time. Never edit or sort; it is the audit trail.'];
+  s.clear();
+  s.getRange(1, 1, lines.length, 1).setValues(lines.map(l => [l])).setWrap(true);
+  s.getRange(1, 1).setFontSize(14).setFontWeight('bold');
 }
 
-/** Called on app start: who is signed in. */
-function whoAmI() { const u = user_(); return { name: u.name, email: u.email, admin: u.admin }; }
+/* ---------------- sign-in (name + PIN) ---------------- */
+function secret_() {
+  const p = PropertiesService.getScriptProperties();
+  let s = p.getProperty('SECRET');
+  if (!s) { s = Utilities.getUuid() + Utilities.getUuid(); p.setProperty('SECRET', s); }
+  return s;
+}
+function sig_(payload) { return Utilities.base64EncodeWebSafe(Utilities.computeHmacSha256Signature(payload, secret_())); }
+function findUser_(name) {
+  const key = String(name || '').trim().toLowerCase();
+  if (!key) return null;
+  const u = rows_('Users').find(r => String(r['Name']).trim().toLowerCase() === key);
+  return u ? { name: String(u['Name']).trim(), pin: String(u['PIN'] === undefined ? '' : u['PIN']).trim(), active: yes_(u['Active']), admin: yes_(u['Admin']) } : null;
+}
+function user_(token) {
+  try {
+    const [p, s] = String(token || '').split('.');
+    const payload = Utilities.newBlob(Utilities.base64DecodeWebSafe(p)).getDataAsString();
+    if (sig_(payload) !== s) throw 0;
+    const [name, exp] = payload.split('|');
+    if (Date.now() > Number(exp)) throw 0;
+    const u = findUser_(name);
+    if (!u || !u.active) throw 0;
+    return u;
+  } catch (e) { throw new Error('AUTH'); }
+}
+
+/** Called from the sign-in screen. */
+function login(name, pin) {
+  const cache = CacheService.getScriptCache();
+  const failKey = 'fail:' + String(name || '').trim().toLowerCase();
+  const fails = Number(cache.get(failKey) || 0);
+  if (fails >= MAX_FAILS) throw new Error('Too many wrong PINs. Try again in ' + LOCK_MINUTES + ' minutes.');
+  const u = findUser_(name);
+  const typed = String(pin || '').trim();
+  const pinOk = u && u.pin && (u.pin === typed || (/^\d+$/.test(u.pin) && /^\d+$/.test(typed) && Number(u.pin) === Number(typed)));
+  if (!u || !u.active || !pinOk) {
+    cache.put(failKey, String(fails + 1), LOCK_MINUTES * 60);
+    throw new Error('Name or PIN not recognised. Check with the office if you need access.');
+  }
+  cache.remove(failKey);
+  const payload = u.name + '|' + (Date.now() + SESSION_DAYS * 86400000);
+  return { token: Utilities.base64EncodeWebSafe(payload) + '.' + sig_(payload), name: u.name, admin: u.admin };
+}
+
+/** Confirms a saved session on app start. */
+function whoAmI(token) { const u = user_(token); return { name: u.name, admin: u.admin }; }
 
 /* ---------------- jobs ---------------- */
 function getJobs(token) {
@@ -87,7 +207,7 @@ function createJob(token, name, address) {
   });
 }
 
-/** Everything for one job: all walks' items plus the latest status of each. */
+/** Everything for one job: all checklists' items plus the latest status of each. */
 function getJob(token, jobId) {
   user_(token);
   jobId = String(jobId);
@@ -99,10 +219,10 @@ function getJob(token, jobId) {
   rows_('Items').forEach(r => {
     const id = String(r['ItemID']);
     if (!id || hidden.has(id) || (String(r['Active']).trim() && !yes_(r['Active']))) return;
-    items.push({ id: id, src: 'm', walk: Number(r['Walk']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), hold: String(r['Hold']).toUpperCase().indexOf('HOLD') >= 0, text: String(r['Item']), order: Number(r['Order']) || 0 });
+    items.push({ id: id, src: 'm', list: Number(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: Number(r['Order']) || 0 });
   });
   extras.filter(r => String(r['Type']).toUpperCase() !== 'HIDE').forEach(r => {
-    items.push({ id: String(r['ItemID']), src: 'j', walk: Number(r['Walk']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), hold: String(r['Hold']).toUpperCase().indexOf('HOLD') >= 0, text: String(r['Item']), order: 100000 + (r['Added At'] instanceof Date ? r['Added At'].getTime() / 1e9 : 0) });
+    items.push({ id: String(r['ItemID']), src: 'j', list: Number(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: 100000 + (r['Added At'] instanceof Date ? r['Added At'].getTime() / 1e9 : 0) });
   });
   const checks = {};
   rows_('Check Log').forEach(r => {           // later rows win, so this is the current status
@@ -114,42 +234,42 @@ function getJob(token, jobId) {
 }
 
 /** status: 'Done', 'N/A' or 'Cleared'. Every change is a new row in Check Log. */
-function setCheck(token, jobId, itemId, walk, status) {
+function setCheck(token, jobId, itemId, list, status) {
   const u = user_(token);
   if (['Done', 'N/A', 'Cleared'].indexOf(status) < 0) throw new Error('Unknown status.');
   return withLock_(() => {
     const now = new Date();
-    append_('Check Log', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Walk': Number(walk), 'Status': status, 'Name': u.name, 'Timestamp': now });
+    append_('Check Log', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Checklist': Number(list), 'Status': status, 'Name': u.name, 'Timestamp': now });
     return status === 'Cleared' ? null : { status: status, name: u.name, at: fmt_(now) };
   });
 }
 
-/** rows: [{walk, trade, area, hold, text}], scope: 'job' or 'all' (master list – Admin only). */
+/** rows: [{list, trade, area, critical, text}], scope: 'job' or 'all' (master list – Admin only). */
 function addItems(token, jobId, scope, rows) {
   const u = user_(token);
-  rows = (rows || []).filter(r => r && String(r.text || '').trim() && Number(r.walk) >= 1 && Number(r.walk) <= 4);
+  rows = (rows || []).filter(r => r && String(r.text || '').trim() && Number(r.list) >= 1 && Number(r.list) <= CHECKLISTS);
   if (!rows.length) throw new Error('Nothing to add.');
   if (scope === 'all' && !u.admin) throw new Error('Only admins can add to the master list. Choose "This job only" or ask the office.');
   return withLock_(() => {
     if (scope === 'all') {
       let order = Math.max(0, ...rows_('Items').map(r => Number(r['Order']) || 0));
-      rows.forEach(r => append_('Items', { 'ItemID': newId_('M'), 'Walk': Number(r.walk), 'Trade': String(r.trade || 'General').trim(), 'Area': String(r.area || '').trim(), 'Hold': r.hold ? 'HOLD' : '', 'Item': String(r.text).trim(), 'Division': '', 'Order': ++order, 'Active': 'Y' }));
+      rows.forEach(r => append_('Items', { 'ItemID': newId_('M'), 'Checklist': Number(r.list), 'Trade': String(r.trade || 'General').trim(), 'Area': String(r.area || '').trim(), 'Critical': r.critical ? 'CRITICAL' : '', 'Item': String(r.text).trim(), 'Division': '', 'Order': ++order, 'Active': 'Y' }));
     } else {
-      rows.forEach(r => append_('Job Items', { 'JobID': String(jobId), 'ItemID': newId_('X'), 'Type': 'Item', 'Walk': Number(r.walk), 'Trade': String(r.trade || 'General').trim(), 'Area': String(r.area || '').trim(), 'Hold': r.hold ? 'HOLD' : '', 'Item': String(r.text).trim(), 'Added By': u.name, 'Added At': new Date(), 'Removed': '' }));
+      rows.forEach(r => append_('Job Items', { 'JobID': String(jobId), 'ItemID': newId_('X'), 'Type': 'Item', 'Checklist': Number(r.list), 'Trade': String(r.trade || 'General').trim(), 'Area': String(r.area || '').trim(), 'Critical': r.critical ? 'CRITICAL' : '', 'Item': String(r.text).trim(), 'Added By': u.name, 'Added At': new Date(), 'Removed': '' }));
     }
     return rows.length;
   });
 }
 
 /** Removes an item from this job only. Master-list items are hidden for this job, not deleted. */
-function removeItem(token, jobId, itemId, src, walk) {
+function removeItem(token, jobId, itemId, src, list) {
   const u = user_(token);
   return withLock_(() => {
     if (src === 'm') {
-      append_('Job Items', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Type': 'HIDE', 'Walk': Number(walk), 'Added By': u.name, 'Added At': new Date(), 'Removed': '' });
+      append_('Job Items', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Type': 'HIDE', 'Checklist': Number(list), 'Added By': u.name, 'Added At': new Date(), 'Removed': '' });
     } else {
       const sh = sheet_('Job Items');
-      const head = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(h => String(h).trim());
+      const head = head_(sh);
       const r = rows_('Job Items').find(x => String(x['JobID']) === String(jobId) && String(x['ItemID']) === String(itemId));
       if (r) sh.getRange(r._row, head.indexOf('Removed') + 1).setValue('Y');
     }

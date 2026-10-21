@@ -1,10 +1,10 @@
-# Site Walks
+# Site Checklists
 
-Mobile site-walk checklists for Headland Construction. Google Apps Script web app backed by the "Site Walks" Google Sheet.
+Mobile site checklists for Headland Construction. Google Apps Script web app backed by the "Site Walks" Google Sheet. People sign in with the name + PIN listed on the sheet's Users tab.
 
-- `src/Code.gs` – backend (reads/writes the sheet, checks Headland Google sign-in)
+- `src/Code.gs` – backend (reads/writes the sheet, checks name + PIN sign-in)
 - `src/Index.html` – the app screens
-- `src/appsscript.json` – project settings (Vancouver time, web app open to headlandconstruction.com)
+- `src/appsscript.json` – project settings (Vancouver time, web app reachable by anyone with the link; the app itself requires name + PIN)
 - `.github/workflows/deploy.yml` – publishes every change to the live web app automatically
 
 ## How updates work
