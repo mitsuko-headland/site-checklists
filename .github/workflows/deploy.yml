@@ -44,7 +44,12 @@ jobs:
           printf '{"scriptId":"%s","rootDir":"src"}' "$SCRIPT_ID" > .clasp.json
 
       - name: Upload code
-        run: clasp push --force
+        run: |
+          OUT=$(clasp push --force 2>&1); echo "$OUT"
+          if echo "$OUT" | grep -qiE "error|not enabled|denied|invalid|could not"; then
+            echo "::error title=Upload failed::$(echo "$OUT" | tr '\n' ' ')"; exit 1
+          fi
+          echo "::notice title=Uploaded::$(echo "$OUT" | grep -c '└─') files"
 
       - name: Publish new version to the existing web app link
         env:
