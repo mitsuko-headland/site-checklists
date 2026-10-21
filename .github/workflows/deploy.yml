@@ -52,4 +52,12 @@ jobs:
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
           MSG="$(printf '%s' "${COMMIT_MSG:-manual run}" | head -n1 | cut -c1-80)"
-          clasp deploy --deploymentId "$DEPLOYMENT_ID" --description "Auto ${GITHUB_SHA::7}: $MSG"
+          if OUT=$(clasp deploy --deploymentId "$DEPLOYMENT_ID" --description "Auto ${GITHUB_SHA::7}: $MSG" 2>&1); then
+            echo "$OUT"
+            echo "::notice title=Published::$(echo "$OUT" | tr '\n' ' ')"
+          else
+            echo "$OUT"
+            echo "::error title=Publish failed::$(echo "$OUT" | tr '\n' ' ')"
+            echo "::error title=Deployments in this project::$(clasp deployments 2>&1 | tr '\n' ' ')"
+            exit 1
+          fi
