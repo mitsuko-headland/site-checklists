@@ -258,10 +258,10 @@ function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checkl
     if(!(t in S.fold))S.fold[t]=d===list.length;          // a trade with every task done starts folded
     const folded=S.fold[t]&&S.qadd!==t;
     const box=el('div',{class:'items'});vis.forEach(i=>box.append(itemRow(i)));
-    const tgl=el('button',{class:'tgl',type:'button','aria-expanded':String(!folded),onclick:()=>{S.fold[t]=!folded;if(S.fold[t]&&S.qadd===t)S.qadd=null;renderList();}},
+    const tgl=el('button',{class:'tgl',type:'button','aria-expanded':String(!folded),onclick:e=>{const y=e.currentTarget.getBoundingClientRect().top;S.fold[t]=!folded;if(S.fold[t]&&S.qadd===t)S.qadd=null;renderList();keepHeading(t,y);}},
       el('span',{class:'arw','aria-hidden':'true',text:'▼'}),el('span',{class:'tname',text:t}),el('span',{class:'cnt',text:d+'/'+list.length}));
     const plus=el('button',{class:'tadd',type:'button','aria-label':'Add tasks to '+t+' (this job only)',text:'+',onclick:()=>openQuickAdd(t)});
-    G.append(el('section',{class:'tsec'+(folded?' folded':'')},el('div',{class:'trade'},tgl,plus),S.qadd===t?quickAdd(t):null,box));});
+    G.append(el('section',{class:'tsec'+(folded?' folded':''),'data-trade':t},el('div',{class:'trade'},tgl,plus),S.qadd===t?quickAdd(t):null,box));});
   if(!items.length)G.append(el('div',{class:'note',text:'No items in this checklist yet. Use "+ Add items" to add some.'}));
   else if(!shown)G.append(el('div',{class:'empty',text:S.filter==='critical'?'No critical items in this checklist.':'Everything in this checklist is done.'}));}
 function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
@@ -286,6 +286,9 @@ function noteBox(i){const ta=el('textarea',{class:'short','aria-label':'Note',ma
       .catch(x=>toast(x.message)).finally(()=>{S.noteBusy=false;if(S.list)renderList();});};
   return el('div',{class:'editor note-box'},el('label',{class:'f'},document.createTextNode('Note – saved with your name and the time'),ta),el('div',{class:'row'},save,cancel));}
 function focusIn(sel){const x=document.querySelector(sel);if(x){x.focus({preventScroll:true});x.scrollIntoView({block:'center',behavior:'smooth'});}}
+/* after folding/unfolding, scroll so the tapped heading stays where it was on screen */
+function keepHeading(t,y){const sec=[...document.querySelectorAll('.tsec')].find(x=>x.dataset.trade===t);if(!sec)return;
+  const now=sec.querySelector('.trade').getBoundingClientRect().top;if(Math.abs(now-y)>1)window.scrollBy(0,now-y);}
 /* "+" on a trade heading: add tasks to that trade, this job only. */
 function openQuickAdd(t){if(S.qadd!==t){S.qadd=t;S.qaddDraft={text:'',area:'',crit:false,busy:false};}S.fold[t]=false;renderList();focusIn('.qadd textarea');}
 function quickAdd(t){const dr=S.qaddDraft;
