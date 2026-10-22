@@ -16,6 +16,7 @@ Field crews use it on their phones: sign in → choose a job → choose a checkl
 - Repo settings (owner manages): secret `CLASPRC_JSON`, variables `SCRIPT_ID`, `DEPLOYMENT_ID` (the "Site Checklists" deployment, `AKfycbwWR3Fi…`).
 - Check a deploy: `gh run list -R mitsuko-headland/site-checklists --limit 1`, then read the job's check-run annotations (`gh api repos/mitsuko-headland/site-checklists/check-runs/<job id>/annotations`) – the workflow writes "Uploaded …" / "Published … version N" notices or the exact Google error there. Raw logs are not reachable through the proxy.
 - Web app link: `https://script.google.com/macros/s/AKfycbwWR3FihWpsZUhz7CMhESpjXXzfmLs1UrnoL66bp1GJt6Wjdk8MgN1Bj5_ddCDpfm4SfQ/exec` (per-job links add `?job=<JobID>`).
+- Deploy error `invalid_grant` = the Google sign-in saved in `CLASPRC_JSON` has expired. The owner must run `clasp login` on her computer and paste the new `~/.clasprc.json` into the secret; then re-run with `gh workflow run deploy.yml -R mitsuko-headland/site-checklists`.
 - If a change needs a new Google permission (e.g. sending email), the owner must re-authorise once in the Apps Script editor – tell them.
 
 ## Google Sheet (tabs and row-1 headings are looked up by name – never rename them)
