@@ -78,3 +78,11 @@ ok(A.getJob(t2,'J1').checks['t001'].status==='Done','ticks unaffected by notes')
 // quick add from a trade heading = this job only
 ok(A.addItems(tj,'J1','job',[{list:4,trade:'Framing',text:'Extra blocking for TV'}])===1&&A.getJob(t2,'J1').items.some(i=>i.text==='Extra blocking for TV'&&i.src==='j'&&i.trade==='Framing'),'add to one trade on this job only');
 ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only add does not reach other jobs');
+// job-only tasks go at the top of their trade: newest batch first, typed order within a batch
+{const J=A.createJob(t2,'Order test','');
+ A.addItems(t2,J.id,'job',[{list:4,trade:'Framing',text:'First batch A'},{list:4,trade:'Framing',text:'First batch B'}]);
+ const jr=sheets['Job Items'].data;jr.filter(r=>r[0]===J.id).forEach(r=>r[9]=new Date(Date.now()-60000));   // first batch a minute ago
+ A.addItems(t2,J.id,'job',[{list:4,trade:'Framing',text:'Second batch A'},{list:4,trade:'Framing',text:'Second batch B'}]);
+ const fr=A.getJob(t2,J.id).items.filter(i=>i.list===4&&i.trade==='Framing').sort((a,b)=>a.order-b.order).map(i=>i.text);
+ ok(fr.slice(0,4).join('|')==='Second batch A|Second batch B|First batch A|First batch B','newest added tasks first, typed order kept within a batch');
+ ok(fr.length>4&&A.getJob(t2,J.id).items.filter(i=>i.src==='j').every(i=>i.order<0),'added tasks sort ahead of master-list tasks');}

@@ -252,7 +252,9 @@ function openList(n){S.list=n;S.filter='all';$('addPanel').hidden=true;S.fold=Ob
 /* ---------- checklist ---------- */
 function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checklist '+w.n+' – '+w.name;
   const items=itemsFor(S.list),s=stat(S.list),sum=$('summary');sum.textContent='';sum.append(el('b',{text:s.done+' of '+s.total+' done'}));if(s.crit)sum.append(el('span',{class:'pill hold',text:s.crit+' critical open'}));
-  const groups=new Map();items.forEach(i=>{const t=tradeName(i.trade);if(!groups.has(t))groups.set(t,[]);groups.get(t).push(i);});
+  const g0=new Map();items.forEach(i=>{const t=tradeName(i.trade);if(!g0.has(t))g0.set(t,[]);g0.get(t).push(i);});
+  const rank=l=>{const m=l.filter(i=>i.src==='m').map(i=>i.order);return m.length?Math.min(...m):Infinity;};   // trades keep their master-list order
+  const groups=new Map([...g0].map((e,k)=>[e,k]).sort((a,b)=>(rank(a[0][1])-rank(b[0][1]))||(a[1]-b[1])).map(x=>x[0]));
   const G=$('groups');G.textContent='';let shown=0;
   groups.forEach((list,t)=>{const vis=list.filter(i=>S.filter==='all'||(S.filter==='open'&&!isDone(S.data.checks[i.id]))||(S.filter==='critical'&&i.critical));if(!vis.length)return;shown+=vis.length;
     const d=list.filter(i=>isDone(S.data.checks[i.id])).length;
@@ -290,12 +292,16 @@ function focusIn(sel){const x=document.querySelector(sel);if(x){x.focus({prevent
 /* after folding/unfolding, scroll so the tapped heading stays exactly where it was on screen
    (blank space is added at the bottom when the page gets too short to scroll back to the same spot) */
 function keepHeading(t,y){const sec=[...document.querySelectorAll('.tsec')].find(x=>x.dataset.trade===t);if(!sec)return;
-  const pad=$('foldPad'),target=window.scrollY+sec.querySelector('.trade').getBoundingClientRect().top-y;
-  const max=document.documentElement.scrollHeight-window.innerHeight;
-  pad.style.height=Math.max(0,pad.offsetHeight+target-max)+'px';
-  window.scrollTo(0,target);}
+  const target=window.scrollY+sec.querySelector('.trade').getBoundingClientRect().top-y;
+  scrollToY(target);}
+function scrollToY(target){const pad=$('foldPad'),max=document.documentElement.scrollHeight-window.innerHeight;
+  pad.style.height=Math.max(0,pad.offsetHeight+target-max)+'px';window.scrollTo(0,target);}
 /* "+" on a trade heading: add tasks to that trade, this job only. */
-function openQuickAdd(t){if(S.qadd!==t){S.qadd=t;S.qaddDraft={text:'',area:'',crit:false,busy:false};}S.fold[t]=false;renderList();focusIn('.qadd textarea');}
+function openQuickAdd(t){if(S.qadd!==t){S.qadd=t;S.qaddDraft={text:'',area:'',crit:false,busy:false};}S.fold[t]=false;renderList();
+  // put the heading + typing box at the top of the screen so the phone keyboard does not cover it
+  const sec=[...document.querySelectorAll('.tsec')].find(x=>x.dataset.trade===t);
+  if(sec)scrollToY(window.scrollY+sec.getBoundingClientRect().top-document.querySelector('header.top').getBoundingClientRect().height);
+  const ta=document.querySelector('.qadd textarea');if(ta)ta.focus({preventScroll:true});}
 function quickAdd(t){const dr=S.qaddDraft;
   const ta=el('textarea',{'aria-label':'New tasks for '+t,placeholder:'One task per line'});ta.value=dr.text;ta.addEventListener('input',()=>dr.text=ta.value);
   const area=el('input',{placeholder:'Area (optional)','aria-label':'Area'});area.value=dr.area;area.addEventListener('input',()=>dr.area=area.value);

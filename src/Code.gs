@@ -234,9 +234,13 @@ function getJob(token, jobId) {
     if (!id || hidden.has(id) || (String(r['Active']).trim() && !yes_(r['Active']))) return;
     items.push({ id: id, src: 'm', list: Number(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: Number(r['Order']) || 0 });
   });
-  extras.filter(r => String(r['Type']).toUpperCase() !== 'HIDE').forEach(r => {
-    items.push({ id: String(r['ItemID']), src: 'j', list: Number(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: 100000 + (r['Added At'] instanceof Date ? r['Added At'].getTime() / 1e9 : 0) });
-  });
+  // Tasks added to this job go at the top of their trade: newest batch first, each batch in the order it was typed.
+  const at = r => (r['Added At'] instanceof Date ? r['Added At'].getTime() : 0);
+  extras.filter(r => String(r['Type']).toUpperCase() !== 'HIDE')
+    .sort((a, b) => (at(b) - at(a)) || (a._row - b._row))
+    .forEach((r, k) => {
+      items.push({ id: String(r['ItemID']), src: 'j', list: Number(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: -1e6 + k });
+    });
   const checks = {};
   rows_('Check Log').forEach(r => {           // later rows win, so this is the current status
     if (String(r['JobID']) !== jobId) return;
@@ -297,7 +301,8 @@ function addItems(token, jobId, scope, rows) {
       let order = Math.max(0, ...rows_('Items').map(r => Number(r['Order']) || 0));
       rows.forEach(r => append_('Items', { 'ItemID': newId_('M'), 'Checklist': Number(r.list), 'Trade': String(r.trade || 'General').trim(), 'Area': String(r.area || '').trim(), 'Critical': r.critical ? 'CRITICAL' : '', 'Item': String(r.text).trim(), 'Division': '', 'Order': ++order, 'Active': 'Y' }));
     } else {
-      rows.forEach(r => append_('Job Items', { 'JobID': String(jobId), 'ItemID': newId_('X'), 'Type': 'Item', 'Checklist': Number(r.list), 'Trade': String(r.trade || 'General').trim(), 'Area': String(r.area || '').trim(), 'Critical': r.critical ? 'CRITICAL' : '', 'Item': String(r.text).trim(), 'Added By': u.name, 'Added At': new Date(), 'Removed': '' }));
+      const now = new Date();       // one time for the whole batch, so the batch keeps its typed order
+      rows.forEach(r => append_('Job Items', { 'JobID': String(jobId), 'ItemID': newId_('X'), 'Type': 'Item', 'Checklist': Number(r.list), 'Trade': String(r.trade || 'General').trim(), 'Area': String(r.area || '').trim(), 'Critical': r.critical ? 'CRITICAL' : '', 'Item': String(r.text).trim(), 'Added By': u.name, 'Added At': now, 'Removed': '' }));
     }
     return rows.length;
   });
