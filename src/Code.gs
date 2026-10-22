@@ -8,6 +8,7 @@
  *   Job Items  : JobID | ItemID | Type | Checklist | Trade | Area | Critical | Item | Added By | Added At | Removed
  *   Check Log  : JobID | ItemID | Checklist | Status | Name | Timestamp
  *   Edit Log   : Timestamp | Name | JobID | ItemID | Field | Old Value | New Value   (created automatically)
+ *   Notes      : JobID | ItemID | Checklist | Note | Name | Timestamp                 (created automatically)
  * Older sheets that still say "Walk" / "Hold" are upgraded automatically on first use (see upgrade_).
  */
 
@@ -16,7 +17,8 @@ const SESSION_DAYS = 30;
 const MAX_FAILS = 5;            // wrong PINs allowed per name …
 const LOCK_MINUTES = 15;        // … before that name is locked for this long
 const CHECKLISTS = 6;           // 1 Project Startup & Site Protection … 6 Finishing
-const SETUP_TEXT_VERSION = '3';  // bump to rewrite the Setup tab after instructions change
+const SETUP_TEXT_VERSION = '4';
+const NOTE_MAX = 2000;          // longest note accepted, in characters  // bump to rewrite the Setup tab after instructions change
 
 /* ---------------- web app entry ---------------- */
 function doGet(e) {
@@ -133,7 +135,7 @@ function writeSetupTab_(ss) {
   const lines = ['HEADLAND SITE CHECKLISTS – BACKEND', '',
     'This Google Sheet is the backend for the Site Checklists app. Keep it private. The app code lives in GitHub (mitsuko-headland/site-checklists) and is published automatically.', '',
     'DO NOT RENAME',
-    'Tab names (Users, Items, Jobs, Job Items, Check Log, Edit Log) or the column headings in row 1. The app finds them by name. Renaming the file, reordering columns, formatting, and adding extra columns to the right are all fine.', '',
+    'Tab names (Users, Items, Jobs, Job Items, Check Log, Edit Log, Notes) or the column headings in row 1. The app finds them by name. Renaming the file, reordering columns, formatting, and adding extra columns to the right are all fine.', '',
     'WHO CAN SIGN IN',
     'People on the Users tab, with their Name and PIN. Active must start with Y to allow sign-in (blank or N blocks, immediately). Admin starting with Y lets that person add items to the master list and edit any item\'s wording, trade, area and critical flag in the app. A name is locked for 15 minutes after 5 wrong PINs. Sign-ins last 30 days on each phone.', '',
     'CHECKLISTS (the Checklist column on Items)',
@@ -144,7 +146,8 @@ function writeSetupTab_(ss) {
     'Jobs – created from the app. Set Active = N to hide a finished job.',
     'Job Items – items added to (or removed from) a single job from the app. Do not edit by hand.',
     'Check Log – every tick and untick, with name and date/time. Never edit or sort; it is the audit trail.',
-    'Edit Log – every change admins make to an item in the app: old value, new value, who and when. Created automatically on the first edit.'];
+    'Edit Log – every change admins make to an item in the app: old value, new value, who and when. Created automatically on the first edit.',
+    'Notes – notes people add to a task on one job, with name and date/time. Created automatically on the first note. Never edit or sort; the app shows them in this order.'];
   s.clear();
   s.getRange(1, 1, lines.length, 1).setValues(lines.map(l => [l])).setWrap(true);
   s.getRange(1, 1).setFontSize(14).setFontWeight('bold');
@@ -240,7 +243,36 @@ function getJob(token, jobId) {
     const st = String(r['Status']);
     checks[String(r['ItemID'])] = st === 'Cleared' ? null : { status: st, name: String(r['Name']), at: fmt_(r['Timestamp']) };
   });
-  return { job: { id: jobId, name: String(job['Job Name']), address: String(job['Address'] || '') }, items: items, checks: checks };
+  const notes = {};
+  if (SpreadsheetApp.getActive().getSheetByName('Notes')) {
+    rows_('Notes').forEach(r => {             // oldest first
+      if (String(r['JobID']) !== jobId || !String(r['Note']).trim()) return;
+      const id = String(r['ItemID']);
+      (notes[id] = notes[id] || []).push({ text: String(r['Note']), name: String(r['Name']), at: fmt_(r['Timestamp']) });
+    });
+  }
+  return { job: { id: jobId, name: String(job['Job Name']), address: String(job['Address'] || '') }, items: items, checks: checks, notes: notes };
+}
+
+/** Anyone signed in: add a note to a task on this job. Notes are a running log (one row each, never changed). */
+function addNote(token, jobId, itemId, list, text) {
+  const u = user_(token);
+  text = String(text || '').trim();
+  if (!text) throw new Error('Type a note first.');
+  if (text.length > NOTE_MAX) throw new Error('That note is too long (' + NOTE_MAX + ' characters at most).');
+  return withLock_(() => {
+    ensureNotes_();
+    const now = new Date();
+    append_('Notes', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Checklist': Number(list) || '', 'Note': text, 'Name': u.name, 'Timestamp': now });
+    return { text: text, name: u.name, at: fmt_(now) };
+  });
+}
+function ensureNotes_() {
+  const ss = SpreadsheetApp.getActive();
+  if (ss.getSheetByName('Notes')) return;
+  const sh = ss.insertSheet('Notes');
+  sh.appendRow(['JobID', 'ItemID', 'Checklist', 'Note', 'Name', 'Timestamp']);
+  sh.setFrozenRows(1);
 }
 
 /** status: 'Done', 'N/A' or 'Cleared'. Every change is a new row in Check Log. */

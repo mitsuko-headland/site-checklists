@@ -21,7 +21,7 @@ const ctx={SpreadsheetApp:{getActive:()=>({getSheetByName:n=>sheets[n]||null,ins
  Utilities:{getUuid:()=>crypto.randomUUID(),computeHmacSha256Signature:(p,s)=>[...crypto.createHmac('sha256',s).update(p).digest()],
   base64EncodeWebSafe:x=>Buffer.from(typeof x==='string'?x:Buffer.from(x.map(b=>b&255))).toString('base64').replace(/\+/g,'-').replace(/\//g,'_'),
   base64DecodeWebSafe:s=>[...Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64')],newBlob:b=>({getDataAsString:()=>Buffer.from(b.map(x=>x&255)).toString()}),formatDate:d=>d.toISOString().slice(5,16)}};
-const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem};')(...Object.values(ctx));
+const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote};')(...Object.values(ctx));
 const ok=(c,m)=>{if(!c){console.log('FAIL',m);process.exitCode=1}else console.log('ok',m)};
 // login before PINs exist -> rejected, but upgrade runs
 try{A.login('Mark Ellis','1');ok(false,'no pin')}catch(e){console.log('   msg:',e.message);ok(/not recognised/.test(e.message),'no PIN yet -> rejected')}
@@ -63,3 +63,18 @@ ok(A.editItem(t2,'J1','X1','j',{text:'Job extra (edited)',trade:'Plumbing',area:
 ok(sheets['Job Items'].data.find(r=>r[1]==='X1')[7]==='Job extra (edited)','job item updated');
 try{A.editItem(t2,'J1','t003','m',{text:'  '});ok(false,'empty')}catch(e){ok(/cannot be empty/.test(e.message),'empty wording rejected')}
 const d2=A.getJob(t2,'J1');ok(d2.checks['t001'].status==='Done','ticks unaffected by edits');
+// notes (anyone signed in, running log per job)
+ok(!sheets['Notes']&&JSON.stringify(A.getJob(t2,'J1').notes)==='{}','no Notes tab yet -> job loads with no notes');
+const tj=r3t();const n1=A.addNote(tj,'J1','t001',4,'  Backing short at master bath  ');
+ok(n1.name==='Joe Site'&&n1.text==='Backing short at master bath','non-admin can add a note (trimmed, with name)');
+ok(sheets['Notes']&&sheets['Notes'].data[0].join()==='JobID,ItemID,Checklist,Note,Name,Timestamp','Notes tab created with headings');
+A.addNote(t2,'J1','t001',4,'Fixed Oct 22');A.addNote(t2,j.id,'t001',4,'Other job note');
+const nn=A.getJob(t2,'J1').notes['t001'];ok(nn.length===2&&nn[0].name==='Joe Site'&&nn[1].text==='Fixed Oct 22','notes kept as a running log, oldest first');
+ok(A.getJob(t2,j.id).notes['t001'].length===1,'notes belong to one job only');
+try{A.addNote(t2,'J1','t001',4,'   ');ok(false,'empty note')}catch(e){ok(/Type a note/.test(e.message),'empty note rejected')}
+try{A.addNote(t2,'J1','t001',4,'x'.repeat(2001));ok(false,'long note')}catch(e){ok(/too long/.test(e.message),'over-long note rejected')}
+try{A.addNote('bad','J1','t001',4,'hi');ok(false,'auth')}catch(e){ok(e.message==='AUTH','signed-out user cannot add notes')}
+ok(A.getJob(t2,'J1').checks['t001'].status==='Done','ticks unaffected by notes');
+// quick add from a trade heading = this job only
+ok(A.addItems(tj,'J1','job',[{list:4,trade:'Framing',text:'Extra blocking for TV'}])===1&&A.getJob(t2,'J1').items.some(i=>i.text==='Extra blocking for TV'&&i.src==='j'&&i.trade==='Framing'),'add to one trade on this job only');
+ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only add does not reach other jobs');

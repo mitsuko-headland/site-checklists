@@ -27,6 +27,7 @@ Field crews use it on their phones: sign in → choose a job → choose a checkl
 | Job Items | JobID, ItemID, Type (Item / HIDE), Checklist, Trade, Area, Critical, Item, Added By, Added At, Removed |
 | Check Log | JobID, ItemID, Checklist, Status (Done / N/A / Cleared), Name, Timestamp — append-only audit trail; latest row per item wins |
 | Edit Log | Timestamp, Name, JobID, ItemID, Field, Old Value, New Value — created on first admin edit |
+| Notes | JobID, ItemID, Checklist, Note, Name, Timestamp — created on first note; append-only, shown oldest first |
 | Setup | Instructions for the owner; rewritten by `writeSetupTab_` when `SETUP_TEXT_VERSION` changes |
 
 Checklists: 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough In · 4 Rough In & Pre-Drywall · 5 Drywall · 6 Finishing.
@@ -34,13 +35,14 @@ Checklists: 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough I
 
 ## Current behaviour
 - Sign-in: name + PIN (5 wrong PINs → 15-minute lock; 30-day signed token stored on the phone).
-- Everyone signed in: see all jobs, create jobs, tick/untick, add items to one job, copy a job's link.
+- Everyone signed in: see all jobs, create jobs, tick/untick, add items to one job, copy a job's link, **Add note** on any task (running log per job, name + time).
+- Trade headings: tap to fold/unfold (a trade with every task done starts folded each time a checklist is opened); the **+** on a heading adds tasks to that trade on **this job only** (never the master list – that stays on "+ Add items").
 - Admins (Admin = Y): add items to the master list; **Edit** on every item (wording, trade, area, critical flag) – edits to master items apply to every job and are logged; **Remove from this job** is inside the edit form (two taps to confirm).
-- Trade headings stay pinned under the app header while scrolling. Auto-refresh every 45 s, paused while an editor or the add form is open.
+- Trade headings stay pinned under the app header while scrolling. Auto-refresh every 45 s, paused while an editor, note box or add form is open.
 - No "Mark N/A" button (old N/A ticks still display and count as done).
 
 ## Tests
-`node tests/backend.test.js` runs 29 checks against a mock of SpreadsheetApp/Utilities/etc. (sign-in, lockout, sheet upgrade, ticks, add/edit/remove, Edit Log). Run it before every push that touches `src/Code.gs`, and add checks for new behaviour – the owner can't debug Apps Script. For `src/Index.html`, at least confirm the script parses: replace `<?= … ?>` scriptlets with a placeholder and run it through `new Function`.
+`node tests/backend.test.js` runs 40 checks against a mock of SpreadsheetApp/Utilities/etc. (sign-in, lockout, sheet upgrade, ticks, add/edit/remove, Edit Log, notes). Run it before every push that touches `src/Code.gs`, and add checks for new behaviour – the owner can't debug Apps Script. For `src/Index.html`, at least confirm the script parses: replace `<?= … ?>` scriptlets with a placeholder and run it through `new Function`.
 
 ## Open items / ideas not yet requested
 - Admin features the owner may want later: retire a master item from the app, archive finished jobs, manage users/PINs from the app.

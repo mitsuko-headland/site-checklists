@@ -62,8 +62,21 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
 .chip{min-height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:15px}
 .chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 .tsec{margin-top:18px}
-.trade{position:sticky;top:var(--hdr,60px);z-index:3;background:var(--band);color:var(--band-ink);border-radius:10px 10px 0 0;padding:10px 14px;display:flex;justify-content:space-between;gap:10px;font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:.05em;text-transform:uppercase}
-.trade span{font-family:var(--body);font-size:14px;font-weight:500;letter-spacing:0;text-transform:none;opacity:.85}
+.trade{position:sticky;top:var(--hdr,60px);z-index:3;background:var(--band);color:var(--band-ink);border-radius:10px 10px 0 0;display:flex;align-items:stretch;font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:.05em;text-transform:uppercase}
+.tsec.folded .trade{border-radius:10px}
+.trade .tgl{flex:1;min-width:0;display:flex;align-items:center;gap:10px;background:none;border:0;color:inherit;font:inherit;letter-spacing:inherit;text-transform:inherit;text-align:left;padding:10px 14px;min-height:50px;border-radius:inherit}
+.trade .tname{flex:1;min-width:0;overflow-wrap:anywhere}
+.trade .arw{display:inline-block;font-size:13px;width:14px;transition:transform .15s}
+.tsec.folded .arw{transform:rotate(-90deg)}
+.trade .cnt{font-family:var(--body);font-size:14px;font-weight:500;letter-spacing:0;text-transform:none;opacity:.85;white-space:nowrap}
+.trade .tadd{background:none;border:0;border-left:1px solid rgba(255,255,255,.22);color:inherit;min-width:54px;font-family:var(--body);font-size:28px;font-weight:500;line-height:1}
+.qadd{background:var(--surface);border:1px solid var(--line);border-top:0;padding:14px;display:flex;flex-direction:column;gap:10px}
+.tsec.folded .items{display:none}
+.notes{grid-column:2;display:flex;flex-direction:column;gap:6px}
+.notes .nt{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:15px;white-space:pre-wrap;overflow-wrap:anywhere}
+.notes .nt small{display:block;color:var(--muted);font-size:13px;margin-top:2px;white-space:normal}
+.editor textarea.short,.qadd textarea{min-height:80px}
+.qadd textarea,.qadd input,.note-box textarea{font-weight:400}
 .items{background:var(--surface);border:1px solid var(--line);border-top:0;border-radius:0 0 10px 10px}
 .item{display:grid;grid-template-columns:52px 1fr;gap:6px 12px;padding:14px;border-top:1px solid var(--line)}
 .item:first-child{border-top:0}
@@ -187,7 +200,7 @@ const LISTS=[
 const $=id=>document.getElementById(id);
 const el=(tag,props,...kids)=>{const e=document.createElement(tag);if(props)for(const k in props){if(k==='class')e.className=props[k];else if(k==='text')e.textContent=props[k];else if(k.startsWith('on'))e.addEventListener(k.slice(2),props[k]);else e.setAttribute(k,props[k]);}for(const c of kids)if(c!=null)e.append(c);return e;};
 const store={get(k){try{return localStorage.getItem(k);}catch(e){return null;}},set(k,v){try{localStorage.setItem(k,v);}catch(e){}},del(k){try{localStorage.removeItem(k);}catch(e){}}};
-const S={token:store.get('sc.token'),me:null,jobs:[],job:null,data:null,list:null,filter:'all',saving:{}};
+const S={token:store.get('sc.token'),me:null,jobs:[],job:null,data:null,list:null,filter:'all',saving:{},fold:Object.create(null),qadd:null,qaddDraft:null,noteFor:null,noteDraft:'',noteBusy:false};
 let retryFn=null;let pendingJob=JOB_PARAM;
 function call(fn,...args){return new Promise((res,rej)=>google.script.run.withSuccessHandler(res).withFailureHandler(e=>{const m=(e&&e.message)||String(e);if(/AUTH/.test(m))signOut('Please sign in again.');rej(new Error(m));})[fn](...args));}
 function toast(m){const t=$('toast');t.textContent=m;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,2800);}
@@ -232,7 +245,7 @@ function renderLists(){const L=$('listList');L.textContent='';
     const meta=el('div',{class:'meta'},document.createTextNode(s.total?(s.done+' of '+s.total+' done  '):'No items yet  '));if(s.crit)meta.append(el('span',{class:'pill hold',text:s.crit+' critical open'}));
     const bar=el('div',{class:'bar'});const fill=el('i');fill.style.width=pct+'%';bar.append(fill);
     L.append(el('button',{class:'walk',type:'button',onclick:()=>openList(w.n)},el('div',{class:'n',text:String(w.n)}),el('div',{},el('b',{text:w.name}),el('div',{class:'meta',text:w.desc})),meta,bar));});}
-function openList(n){S.list=n;S.filter='all';$('addPanel').hidden=true;
+function openList(n){S.list=n;S.filter='all';$('addPanel').hidden=true;S.fold=Object.create(null);S.qadd=null;S.noteFor=null;
   document.querySelectorAll('.chip').forEach(c=>c.setAttribute('aria-pressed',String(c.dataset.f==='all')));renderList();show('vList');}
 
 /* ---------- checklist ---------- */
@@ -242,8 +255,13 @@ function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checkl
   const G=$('groups');G.textContent='';let shown=0;
   groups.forEach((list,t)=>{const vis=list.filter(i=>S.filter==='all'||(S.filter==='open'&&!isDone(S.data.checks[i.id]))||(S.filter==='critical'&&i.critical));if(!vis.length)return;shown+=vis.length;
     const d=list.filter(i=>isDone(S.data.checks[i.id])).length;
+    if(!(t in S.fold))S.fold[t]=d===list.length;          // a trade with every task done starts folded
+    const folded=S.fold[t]&&S.qadd!==t;
     const box=el('div',{class:'items'});vis.forEach(i=>box.append(itemRow(i)));
-    G.append(el('section',{class:'tsec'},el('div',{class:'trade'},document.createTextNode(t),el('span',{text:d+'/'+list.length})),box));});
+    const tgl=el('button',{class:'tgl',type:'button','aria-expanded':String(!folded),onclick:()=>{S.fold[t]=!folded;if(S.fold[t]&&S.qadd===t)S.qadd=null;renderList();}},
+      el('span',{class:'arw','aria-hidden':'true',text:'▼'}),el('span',{class:'tname',text:t}),el('span',{class:'cnt',text:d+'/'+list.length}));
+    const plus=el('button',{class:'tadd',type:'button','aria-label':'Add tasks to '+t+' (this job only)',text:'+',onclick:()=>openQuickAdd(t)});
+    G.append(el('section',{class:'tsec'+(folded?' folded':'')},el('div',{class:'trade'},tgl,plus),S.qadd===t?quickAdd(t):null,box));});
   if(!items.length)G.append(el('div',{class:'note',text:'No items in this checklist yet. Use "+ Add items" to add some.'}));
   else if(!shown)G.append(el('div',{class:'empty',text:S.filter==='critical'?'No critical items in this checklist.':'Everything in this checklist is done.'}));}
 function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
@@ -253,9 +271,35 @@ function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
   if(i.critical)tags.append(el('span',{class:'pill hold',text:'CRITICAL'}));if(i.area)tags.append(el('span',{class:'tag',text:i.area}));if(i.src==='j')tags.append(el('span',{class:'tag extra',text:'this job'}));
   if(tags.childNodes.length)txt.append(tags);row.append(txt);
   if(st)row.append(el('div',{class:'stamp',text:(st==='N/A'?'N/A ':'✓ ')+c.name+' · '+c.at}));
+  const ns=(S.data.notes||{})[i.id]||[];
+  if(ns.length)row.append(el('div',{class:'notes'},...ns.map(n=>el('div',{class:'nt'},document.createTextNode(n.text),el('small',{text:n.name+' · '+n.at})))));
   const side=el('div',{class:'side'});
   if(S.me&&S.me.admin)side.append(el('button',{class:'link',type:'button',text:'Edit',onclick:()=>openEditor(row,i)}));
-  if(side.childNodes.length)row.append(side);return row;}
+  side.append(el('button',{class:'link',type:'button',text:'Add note',onclick:()=>{if(S.noteFor!==i.id){S.noteFor=i.id;S.noteDraft='';}renderList();focusIn('.note-box textarea');}}));
+  row.append(side);if(S.noteFor===i.id)row.append(noteBox(i));return row;}
+/* Notes: anyone signed in; each note is kept with name + time (running log for this job). */
+function noteBox(i){const ta=el('textarea',{class:'short','aria-label':'Note',maxlength:'2000',placeholder:'e.g. Backing missing at master bath vanity'});ta.value=S.noteDraft;ta.addEventListener('input',()=>S.noteDraft=ta.value);
+  const save=el('button',{class:'btn primary',type:'button',text:'Save note'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});save.disabled=S.noteBusy;
+  cancel.onclick=()=>{S.noteFor=null;S.noteDraft='';renderList();};
+  save.onclick=()=>{if(!ta.value.trim()){toast('Type a note first');return;}S.noteBusy=true;save.disabled=true;
+    call('addNote',S.token,S.job.id,i.id,i.list,ta.value).then(n=>{S.data.notes=S.data.notes||{};(S.data.notes[i.id]=S.data.notes[i.id]||[]).push(n);S.noteFor=null;S.noteDraft='';toast('Note saved');})
+      .catch(x=>toast(x.message)).finally(()=>{S.noteBusy=false;if(S.list)renderList();});};
+  return el('div',{class:'editor note-box'},el('label',{class:'f'},document.createTextNode('Note – saved with your name and the time'),ta),el('div',{class:'row'},save,cancel));}
+function focusIn(sel){const x=document.querySelector(sel);if(x){x.focus({preventScroll:true});x.scrollIntoView({block:'center',behavior:'smooth'});}}
+/* "+" on a trade heading: add tasks to that trade, this job only. */
+function openQuickAdd(t){if(S.qadd!==t){S.qadd=t;S.qaddDraft={text:'',area:'',crit:false,busy:false};}S.fold[t]=false;renderList();focusIn('.qadd textarea');}
+function quickAdd(t){const dr=S.qaddDraft;
+  const ta=el('textarea',{'aria-label':'New tasks for '+t,placeholder:'One task per line'});ta.value=dr.text;ta.addEventListener('input',()=>dr.text=ta.value);
+  const area=el('input',{placeholder:'Area (optional)','aria-label':'Area'});area.value=dr.area;area.addEventListener('input',()=>dr.area=area.value);
+  const crit=el('input',{type:'checkbox',style:'width:24px;height:24px;min-height:0'});crit.checked=dr.crit;crit.addEventListener('change',()=>dr.crit=crit.checked);
+  const save=el('button',{class:'btn primary',type:'button',text:'Add to this job'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});save.disabled=dr.busy;
+  cancel.onclick=()=>{S.qadd=null;renderList();};
+  save.onclick=()=>{const lines=ta.value.split('\n').map(x=>x.trim()).filter(Boolean);if(!lines.length){toast('Type at least one task');return;}dr.busy=true;save.disabled=true;
+    call('addItems',S.token,S.job.id,'job',lines.map(text=>({list:S.list,trade:t,area:area.value.trim(),critical:crit.checked,text})))
+      .then(n=>{S.qadd=null;toast(n+' task'+(n>1?'s':'')+' added to this job');return loadJob();})
+      .catch(x=>{dr.busy=false;if(S.list)renderList();toast(x.message);});};
+  return el('div',{class:'qadd'},el('label',{class:'f'},document.createTextNode('New '+t+' tasks – this job only, one per line'),ta),area,
+    el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),el('div',{class:'row'},save,cancel));}
 /* Admin editor: wording, trade, area, critical. */
 function openEditor(row,i){if(row.querySelector('.editor'))return;
   const ta=el('textarea',{'aria-label':'Item wording'});ta.value=i.text;
@@ -287,7 +331,7 @@ function setHdr(){document.documentElement.style.setProperty('--hdr',document.qu
 window.addEventListener('resize',setHdr);setHdr();
 $('addToggle').addEventListener('click',()=>{const p=$('addPanel');p.hidden=!p.hidden;if(!p.hidden){addPicker=null;renderTrades();}});
 $('refreshBtn').addEventListener('click',()=>loadJob().then(()=>toast('Up to date')));
-setInterval(()=>{if(S.list&&S.data&&!document.hidden&&!Object.keys(S.saving).length&&!document.querySelector('.editor')&&$('addPanel').hidden)loadJob();},45000);
+setInterval(()=>{if(S.list&&S.data&&!document.hidden&&!Object.keys(S.saving).length&&!document.querySelector('.editor')&&!S.qadd&&$('addPanel').hidden)loadJob();},45000);
 
 /* ---------- add items ---------- */
 let addPicker=null;
