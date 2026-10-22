@@ -8,6 +8,7 @@ Field crews use it on their phones: sign in → choose a job → choose a checkl
 - **Do not change anything until the owner says "go"** (or "proceed with the changes"). Until then, collect requests, explain the plan, ask questions, and keep a numbered running list.
 - When the owner says go: first `git fetch` and compare with `origin/main` so you never overwrite edits made elsewhere; then make the changes, run the backend tests, commit, push, and confirm the deploy succeeded (see below).
 - Write for a non-technical reader: plain words, what changed, what (if anything) they need to do.
+- **How to give the owner steps:** she is on **Windows** (PowerShell) – never give Mac/Finder steps. Keep steps short: a numbered command she types, one line on what happens, and a one-line path for clicks (A → B → C). No long background or explanations unless she asks.
 - The owner is the only person who opens the Google Sheet. Anything other users need to do must be possible in the app.
 
 ## How publishing works
@@ -16,8 +17,17 @@ Field crews use it on their phones: sign in → choose a job → choose a checkl
 - Repo settings (owner manages): secret `CLASPRC_JSON`, variables `SCRIPT_ID`, `DEPLOYMENT_ID` (the "Site Checklists" deployment, `AKfycbwWR3Fi…`).
 - Check a deploy: `gh run list -R mitsuko-headland/site-checklists --limit 1`, then read the job's check-run annotations (`gh api repos/mitsuko-headland/site-checklists/check-runs/<job id>/annotations`) – the workflow writes "Uploaded …" / "Published … version N" notices or the exact Google error there. Raw logs are not reachable through the proxy.
 - Web app link: `https://script.google.com/macros/s/AKfycbwWR3FihWpsZUhz7CMhESpjXXzfmLs1UrnoL66bp1GJt6Wjdk8MgN1Bj5_ddCDpfm4SfQ/exec` (per-job links add `?job=<JobID>`).
-- Deploy error `invalid_grant` = the Google sign-in saved in `CLASPRC_JSON` has expired. The owner must run `clasp login` on her computer and paste the new `~/.clasprc.json` into the secret; then re-run with `gh workflow run deploy.yml -R mitsuko-headland/site-checklists`.
+- Deploy error `invalid_grant` = the Google sign-in saved in `CLASPRC_JSON` has expired. Give the owner the steps in **Renewing the Google sign-in** below, word for word. When she says done, re-run with `gh api -X POST repos/mitsuko-headland/site-checklists/actions/workflows/deploy.yml/dispatches -f ref=main` (`gh workflow run` fails – GraphQL is blocked) and confirm the "Published" notice.
 - If a change needs a new Google permission (e.g. sending email), the owner must re-authorise once in the Apps Script editor – tell them.
+
+## Renewing the Google sign-in (send exactly this)
+In PowerShell (Start → type PowerShell):
+1. `clasp.cmd login`. A browser window opens. Sign in with your Google account, click Allow, then come back to PowerShell.
+2. `Get-Content $HOME\.clasprc.json -Raw | Set-Clipboard`. Nothing appears, but the sign-in is now copied.
+
+Then paste it into GitHub: site-checklists repository → Settings → Secrets and variables → Actions → pencil next to CLASPRC_JSON → Ctrl+V → Update secret. Tell me when it's done.
+
+(Use `clasp.cmd`, not `clasp` – plain `clasp` is blocked by Windows' script setting. If it keeps expiring within days, the likely cause is a Google Workspace re-sign-in rule; offer to fix that.)
 
 ## Google Sheet (tabs and row-1 headings are looked up by name – never rename them)
 | Tab | Columns |
