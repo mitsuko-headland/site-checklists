@@ -47,7 +47,7 @@ Checklists: 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough I
 ## Current behaviour
 - Sign-in: name + PIN (5 wrong PINs → 15-minute lock; 30-day signed token stored on the phone).
 - Everyone signed in: see all jobs, create jobs, tick/untick, add items to one job, copy a job's link, **Add note** on any task (running log per job, name + time).
-- Trade headings: tap to fold/unfold – the page scrolls so the tapped heading stays on screen (a trade with every task done starts folded each time a checklist is opened); the **+** on a heading adds tasks to that trade on **this job only** (never the master list – that stays on "+ Add items").
+- Trade headings: tap to fold/unfold – the screen stays exactly where it was – blank space (#foldPad) is added at the bottom when the page would otherwise get too short (a trade with every task done starts folded each time a checklist is opened); the **+** on a heading adds tasks to that trade on **this job only** (never the master list – that stays on "+ Add items").
 - Admins (Admin = Y): add items to the master list; **Edit** on every item (wording, trade, area, critical flag) – edits to master items apply to every job and are logged; **Remove from this job** is inside the edit form (two taps to confirm).
 - Trade headings stay pinned under the app header while scrolling. Auto-refresh every 45 s, paused while an editor, note box or add form is open.
 - No "Mark N/A" button (old N/A ticks still display and count as done).

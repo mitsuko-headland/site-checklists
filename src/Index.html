@@ -183,6 +183,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
         <input type="file" id="aFile" accept=".csv,text/csv">
       </details>
     </div>
+    <div id="foldPad" aria-hidden="true"></div>
   </section>
 </main>
 <div class="toast" id="toast" hidden></div>
@@ -245,7 +246,7 @@ function renderLists(){const L=$('listList');L.textContent='';
     const meta=el('div',{class:'meta'},document.createTextNode(s.total?(s.done+' of '+s.total+' done  '):'No items yet  '));if(s.crit)meta.append(el('span',{class:'pill hold',text:s.crit+' critical open'}));
     const bar=el('div',{class:'bar'});const fill=el('i');fill.style.width=pct+'%';bar.append(fill);
     L.append(el('button',{class:'walk',type:'button',onclick:()=>openList(w.n)},el('div',{class:'n',text:String(w.n)}),el('div',{},el('b',{text:w.name}),el('div',{class:'meta',text:w.desc})),meta,bar));});}
-function openList(n){S.list=n;S.filter='all';$('addPanel').hidden=true;S.fold=Object.create(null);S.qadd=null;S.noteFor=null;
+function openList(n){S.list=n;S.filter='all';$('addPanel').hidden=true;S.fold=Object.create(null);S.qadd=null;S.noteFor=null;$('foldPad').style.height='0px';
   document.querySelectorAll('.chip').forEach(c=>c.setAttribute('aria-pressed',String(c.dataset.f==='all')));renderList();show('vList');}
 
 /* ---------- checklist ---------- */
@@ -286,9 +287,13 @@ function noteBox(i){const ta=el('textarea',{class:'short','aria-label':'Note',ma
       .catch(x=>toast(x.message)).finally(()=>{S.noteBusy=false;if(S.list)renderList();});};
   return el('div',{class:'editor note-box'},el('label',{class:'f'},document.createTextNode('Note – saved with your name and the time'),ta),el('div',{class:'row'},save,cancel));}
 function focusIn(sel){const x=document.querySelector(sel);if(x){x.focus({preventScroll:true});x.scrollIntoView({block:'center',behavior:'smooth'});}}
-/* after folding/unfolding, scroll so the tapped heading stays where it was on screen */
+/* after folding/unfolding, scroll so the tapped heading stays exactly where it was on screen
+   (blank space is added at the bottom when the page gets too short to scroll back to the same spot) */
 function keepHeading(t,y){const sec=[...document.querySelectorAll('.tsec')].find(x=>x.dataset.trade===t);if(!sec)return;
-  const now=sec.querySelector('.trade').getBoundingClientRect().top;if(Math.abs(now-y)>1)window.scrollBy(0,now-y);}
+  const pad=$('foldPad'),target=window.scrollY+sec.querySelector('.trade').getBoundingClientRect().top-y;
+  const max=document.documentElement.scrollHeight-window.innerHeight;
+  pad.style.height=Math.max(0,pad.offsetHeight+target-max)+'px';
+  window.scrollTo(0,target);}
 /* "+" on a trade heading: add tasks to that trade, this job only. */
 function openQuickAdd(t){if(S.qadd!==t){S.qadd=t;S.qaddDraft={text:'',area:'',crit:false,busy:false};}S.fold[t]=false;renderList();focusIn('.qadd textarea');}
 function quickAdd(t){const dr=S.qaddDraft;
