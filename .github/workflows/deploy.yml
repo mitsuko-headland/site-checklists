@@ -45,8 +45,8 @@ jobs:
 
       - name: Upload code
         run: |
-          OUT=$(clasp push --force 2>&1); echo "$OUT"
-          if echo "$OUT" | grep -qiE "error|not enabled|denied|invalid|could not"; then
+          RC=0; OUT=$(clasp push --force 2>&1) || RC=$?; echo "$OUT"
+          if [ "$RC" -ne 0 ] || echo "$OUT" | grep -qiE "error|not enabled|denied|invalid|could not"; then
             echo "::error title=Upload failed::$(echo "$OUT" | tr '\n' ' ')"; exit 1
           fi
           echo "::notice title=Uploaded::$(echo "$OUT" | grep -c '└─') files"
