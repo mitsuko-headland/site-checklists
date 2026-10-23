@@ -209,6 +209,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
 (function(){
 const JOB_PARAM='<?= jobParam ?>';const APP_URL='<?= appUrl ?>';
 const LISTS=[
+ {n:0,name:'Project management to do',desc:'Admin-only to-dos for running the project',admin:true},   // admins only, on every job
  {n:1,name:'Project Startup & Site Protection',desc:'Signage, site setup and protecting areas outside the scope'},
  {n:2,name:'Demolition',desc:'Demolition and removal'},
  {n:3,name:'Pre-Rough In',desc:'Planning & layout before trades rough in'},
@@ -235,6 +236,8 @@ const tkey=t=>tradeName(t).toLowerCase();
 function tradeTab(){const m=new Map();((S.data&&S.data.trades)||[]).forEach((x,k)=>{const n=tradeName(x.name);if(n&&!m.has(n.toLowerCase()))m.set(n.toLowerCase(),{name:n,code:String(x.code||'').trim(),k});});return m;}
 const codeNum=c=>{const n=parseFloat(String(c||'').replace(/[^0-9.]/g,''));return isNaN(n)?Infinity:n;};
 function tradeLabel(t,tab){const x=(tab||tradeTab()).get(tkey(t));return x&&x.code?x.code+' '+t:t;}
+function listOf(n){return LISTS.find(x=>x.n===n);}
+const hasList=()=>S.list!==null&&S.list!==undefined;   // checklist 0 is a real checklist
 const isDone=c=>!!(c&&(c.status==='Done'||c.status==='N/A'));
 function header(title,sub){$('brandName').textContent=title;$('sub').textContent=sub;if(typeof setHdr==='function')setHdr();}
 /* Shows a load error with a Try again button, and retries once by itself after a few seconds. */
@@ -285,21 +288,21 @@ function gotJob(d){if(!S.job||d.job.id!==S.job.id)return;const pre=d.job.id+'|';
   Object.keys(S.pend).forEach(k=>{if(k.indexOf(pre)===0)d.checks[k.slice(pre.length)]=S.pend[k].val;});
   S.data=d;S.job=d.job;saveJob();header(d.job.name,d.job.address||'Choose a checklist');renderTrades();
   if(S.list&&isHidden(S.list)&&!(S.me&&S.me.admin)){S.list=null;renderLists();show('vLists');toast('That checklist has been hidden on this job');return;}
-  if(S.list)renderList();else if(!$('vLists').hidden)renderLists();}
+  if(hasList())renderList();else if(!$('vLists').hidden)renderLists();}
 function loadJob(){const id=S.job.id;return call('getJob',S.token,id).then(gotJob)
   .catch(x=>{if(/AUTH/.test(x.message))return;if(S.job&&S.job.id!==id)return;if(S.data)toast('Could not refresh – '+x.message);else failed(x.message,()=>openJob(id));});}
 function itemsFor(n){return S.data?S.data.items.filter(i=>i.list===n).sort((a,b)=>a.order-b.order):[];}
 function stat(n){const it=itemsFor(n);let done=0,crit=0;it.forEach(i=>{if(isDone(S.data.checks[i.id]))done++;else if(i.critical)crit++;});return{total:it.length,done,crit};}
 function isHidden(n){return !!(S.data&&(S.data.hiddenLists||[]).includes(n));}
 function renderLists(){const L=$('listList');L.textContent='';const admin=!!(S.me&&S.me.admin);
-  LISTS.forEach(w=>{const hid=isHidden(w.n);if(hid&&!admin)return;          // hidden on this job: only admins see it
+  LISTS.forEach(w=>{if(w.admin&&!admin)return;const hid=isHidden(w.n);if(hid&&!admin)return;          // admin-only checklist, or hidden on this job: only admins see it
     const s=stat(w.n);const pct=s.total?Math.round(s.done/s.total*100):0;
     const meta=el('div',{class:'meta'},document.createTextNode(s.total?(s.done+' of '+s.total+' done  '):'No items yet  '));if(s.crit)meta.append(el('span',{class:'pill hold',text:s.crit+' critical open'}));
     const bar=el('div',{class:'bar'});const fill=el('i');fill.style.width=pct+'%';bar.append(fill);
     const title=el('b',{text:w.name});if(hid)title.append(el('span',{class:'hidtag',text:'HIDDEN'}));
     const card=el('button',{class:'walk',type:'button',onclick:()=>openList(w.n)},el('div',{class:'n',text:String(w.n)}),el('div',{},title,el('div',{class:'meta',text:w.desc})),meta,bar);
     const row=el('div',{class:'walkrow'+(admin?' admin':'')+(hid?' hiddenlist':'')},card);
-    if(admin)row.append(listHideBtn(w,hid));
+    if(admin&&!w.admin)row.append(listHideBtn(w,hid));
     L.append(row);});}
 /* Hide / Unhide a checklist on this job (admins): first tap arms, second tap within 4 s confirms */
 function listHideBtn(w,hid){const b=el('button',{class:'lhide',type:'button',text:hid?'Unhide':'Hide','aria-label':(hid?'Unhide ':'Hide ')+w.name+' on this job'});
@@ -317,7 +320,7 @@ function openList(n){closeEditor();S.list=n;S.filter='all';$('addPanel').hidden=
 function renderList(){const foc=S.editor&&S.editor.el.contains(document.activeElement)?document.activeElement:null;renderList_();
   if(S.editor&&!S.editor.el.isConnected)S.editor=null;   // its task is gone (or filtered out)
   if(foc&&foc.isConnected&&document.activeElement!==foc)foc.focus({preventScroll:true});}
-function renderList_(){const w=LISTS[S.list-1];$('listTitle').textContent='Checklist '+w.n+' – '+w.name;
+function renderList_(){const w=listOf(S.list);$('listTitle').textContent='Checklist '+w.n+' – '+w.name;
   const items=itemsFor(S.list),s=stat(S.list),sum=$('summary');sum.textContent='';sum.append(el('b',{text:s.done+' of '+s.total+' done'}));if(s.crit)sum.append(el('span',{class:'pill hold',text:s.crit+' critical open'}));
   const g0=new Map();items.forEach(i=>{const t=tradeName(i.trade);if(!g0.has(t))g0.set(t,[]);g0.get(t).push(i);});
   const rank=l=>{const m=l.filter(i=>i.src==='m').map(i=>i.order);return m.length?Math.min(...m):Infinity;};   // trades keep their master-list order
@@ -359,7 +362,7 @@ function noteBox(i){const ta=el('textarea',{class:'short','aria-label':'Note',ma
   cancel.onclick=()=>{S.noteFor=null;S.noteDraft='';renderList();};
   save.onclick=()=>{if(!ta.value.trim()){toast('Type a note first');return;}S.noteBusy=true;save.disabled=true;
     call('addNote',S.token,S.job.id,i.id,i.list,ta.value).then(n=>{S.data.notes=S.data.notes||{};(S.data.notes[i.id]=S.data.notes[i.id]||[]).push(n);saveJob();S.noteFor=null;S.noteDraft='';toast('Note saved');})
-      .catch(x=>toast(x.message)).finally(()=>{S.noteBusy=false;if(S.list)renderList();});};
+      .catch(x=>toast(x.message)).finally(()=>{S.noteBusy=false;if(hasList())renderList();});};
   return el('div',{class:'editor note-box'},el('label',{class:'f'},document.createTextNode('Note – saved with your name and the time'),ta),el('div',{class:'row'},save,cancel));}
 function focusIn(sel){const x=document.querySelector(sel);if(x){x.focus({preventScroll:true});x.scrollIntoView({block:'center',behavior:'smooth'});}}
 /* after folding/unfolding, scroll so the tapped heading stays exactly where it was on screen
@@ -391,7 +394,7 @@ function quickAdd(t){const dr=S.qaddDraft;const admin=!!(S.me&&S.me.admin);
     dr.busy=true;save.disabled=true;save.textContent='Adding…';
     call('addItems',S.token,S.job.id,where,lines.map(text=>({list:S.list,trade:trade,area:area.value.trim(),critical:crit.checked,text})))
       .then(n=>{S.qadd=null;toast(n+' task'+(n>1?'s':'')+' added '+(where==='all'?'to the master list (every job)':'to this job'));return loadJob();})
-      .catch(x=>{dr.busy=false;if(S.list)renderList();toast(x.message);});};
+      .catch(x=>{dr.busy=false;if(hasList())renderList();toast(x.message);});};
   return el('div',{class:'qadd'},el('label',{class:'f'},document.createTextNode('New tasks – one per line'),ta),
     el('div',{class:'grid2'},el('label',{class:'f'},document.createTextNode('Trade'),tp.el),el('label',{class:'f'},document.createTextNode('Area'),area)),
     el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),
@@ -439,9 +442,9 @@ function setCheck(i,status){const jobId=S.job.id,k=jobId+'|'+i.id;
     call('setCheck',S.token,jobId,i.id,i.list,want.status).then(r=>{
       if(S.pend[k]!==want){send();return;}
       delete S.pend[k];delete S.before[k];delete S.saving[k];
-      if(here()){S.data.checks[i.id]=r;saveJob();if(S.list)renderList();}})
+      if(here()){S.data.checks[i.id]=r;saveJob();if(hasList())renderList();}})
     .catch(x=>{const prev=S.before[k];delete S.pend[k];delete S.before[k];delete S.saving[k];
-      if(here()){S.data.checks[i.id]=prev;saveJob();if(S.list)renderList();}
+      if(here()){S.data.checks[i.id]=prev;saveJob();if(hasList())renderList();}
       if(!/AUTH/.test(x.message))toast('Not saved – tick it again ('+x.message+')');});})();}
 function removeItem(i,onFail,onDone){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{if(onDone)onDone();S.data.items=S.data.items.filter(x=>x.id!==i.id);saveJob();renderList();toast('Removed from this job');}).catch(x=>{if(onFail)onFail();toast(x.message);});}
 document.querySelectorAll('.chip[data-f]').forEach(c=>c.addEventListener('click',()=>{S.filter=c.dataset.f;if(S.filter==='done')Object.keys(S.fold).forEach(t=>S.fold[t]=false);document.querySelectorAll('.chip[data-f]').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));renderList();}));
@@ -454,12 +457,12 @@ function setHdr(){document.documentElement.style.setProperty('--hdr',document.qu
 window.addEventListener('resize',setHdr);setHdr();
 $('addToggle').addEventListener('click',()=>{const p=$('addPanel');p.hidden=!p.hidden;if(!p.hidden){addPicker=null;renderTrades();}});
 $('refreshBtn').addEventListener('click',()=>loadJob().then(()=>toast('Up to date')));
-setInterval(()=>{if(S.list&&S.data&&!document.hidden&&!Object.keys(S.saving).length&&!document.querySelector('.editor')&&!S.qadd&&$('addPanel').hidden)loadJob();},45000);
+setInterval(()=>{if(hasList()&&S.data&&!document.hidden&&!Object.keys(S.saving).length&&!document.querySelector('.editor')&&!S.qadd&&$('addPanel').hidden)loadJob();},45000);
 
 /* ---------- add items ---------- */
 let addPicker=null;
 function renderTrades(){if(addPicker&&!$('addPanel').hidden)return;const box=$('aTradeBox');const cur=addPicker?addPicker.value():'';addPicker=tradePicker(cur||defaultTrade());box.textContent='';box.append(addPicker.el);}
-function defaultTrade(){const c={};itemsFor(S.list||0).forEach(i=>{const t=tradeName(i.trade);c[t]=(c[t]||0)+1;});return Object.keys(c).sort((a,b)=>c[b]-c[a])[0]||'';}
+function defaultTrade(){const c={};itemsFor(hasList()?S.list:-1).forEach(i=>{const t=tradeName(i.trade);c[t]=(c[t]||0)+1;});return Object.keys(c).sort((a,b)=>c[b]-c[a])[0]||'';}
 /* "+ Add items": one save at a time (button shows "Adding…"); on success the form closes, clears and resets to
    "This job only"; on failure it stays open with the tasks still typed. */
 let adding=false;
@@ -472,7 +475,7 @@ $('aSave').addEventListener('click',()=>{const lines=$('aText').value.split('\n'
   add(lines.map(text=>({list:S.list,trade,area:$('aArea').value.trim(),critical:$('aCrit').checked,text})));});
 function parseCSV(t){const rows=[];let r=[],f='',q=false;for(let i=0;i<t.length;i++){const ch=t[i];if(q){if(ch==='"'){if(t[i+1]==='"'){f+='"';i++;}else q=false;}else f+=ch;}else if(ch==='"')q=true;else if(ch===','){r.push(f);f='';}else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&t[i+1]==='\n')i++;r.push(f);rows.push(r);r=[];f='';}else f+=ch;}if(f||r.length){r.push(f);rows.push(r);}return rows.filter(x=>x.some(c=>c.trim()));}
 $('aFile').addEventListener('change',e=>{const file=e.target.files[0];if(!file)return;const rd=new FileReader();rd.onload=()=>{const rows=parseCSV(String(rd.result));if(rows.length&&/checklist|walk/i.test(rows[0][0]||''))rows.shift();
-  const out=rows.map(r=>({list:parseInt(r[0],10),trade:(r[1]||'').trim(),area:(r[2]||'').trim(),critical:/crit|hold/i.test(r[3]||''),text:(r[4]||'').trim()})).filter(r=>r.list>=1&&r.list<=6&&r.text);
+  const out=rows.map(r=>({list:parseInt(r[0],10),trade:(r[1]||'').trim(),area:(r[2]||'').trim(),critical:/crit|hold/i.test(r[3]||''),text:(r[4]||'').trim()})).filter(r=>r.list>=(S.me&&S.me.admin?0:1)&&r.list<=6&&r.text);
   if(!out.length){toast('No valid rows found – check the columns');return;}add(out);e.target.value='';};rd.readAsText(file);});
 
 $('copyLink').addEventListener('click',()=>{const v=$('jobLink').value;const done=()=>toast('Job link copied');

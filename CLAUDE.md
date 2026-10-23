@@ -43,7 +43,7 @@ Then paste it into GitHub: site-checklists repository → Settings → Secrets a
 | (readable columns) | **Job Name** (after JobID) and **Task** (after ItemID) on Job Items, Check Log, Notes and Edit Log – readable copies written at the time by `append_` (via `jobLabel_`/`taskLabel_`, which read sheets with `raw_`, never `rows_`). Backfilled once by `readableUpgrade_` (property `READABLE_V1`; older rows get current wording). The app only uses the ID columns |
 | Setup | Instructions for the owner; rewritten by `writeSetupTab_` when `SETUP_TEXT_VERSION` changes |
 
-Checklists: 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough In · 4 Rough In & Pre-Drywall · 5 Drywall · 6 Finishing.
+Checklists: **0 Project management to do (admins only** – `ADMIN_LIST`; `forUser_` strips its tasks/ticks/notes from getJob/startup for non-admins; addItems refuses list 0 for non-admins; no Hide button; `cl_()` keeps a blank Checklist cell from meaning 0; screens use `hasList()`/`listOf()` because 0 is falsy) · 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough In · 4 Rough In & Pre-Drywall · 5 Drywall · 6 Finishing.
 `upgrade_()` migrates older sheets once (Walk→Checklist, Hold→Critical, renumbering, startup items); keep it idempotent.
 
 ## Current behaviour
@@ -69,7 +69,7 @@ Checklists: 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough I
 - Speed: the app starts with ONE backend call, `startup(token, jobId)` (who's signed in + job list + the open job), instead of whoAmI → getJobs → getJob. Each phone keeps a saved copy (localStorage keys `sc.c.*`: me, jobs, last 5 jobs' data) so the app paints instantly, then updates from the sheet; the copy is cleared on sign-out. Ticks show instantly and save in the background (one write at a time per task; a failed save undoes the tick and says so). `setCheck` and `addNote` only append a row, so they no longer take the script lock.
 
 ## Tests
-`node tests/backend.test.js` runs 117 checks against a mock of SpreadsheetApp/Utilities/etc. (sign-in, lockout, sheet upgrade, ticks, add/edit/remove, Edit Log, notes, startup, trade codes, added-by, job-only edits, removal log, clean-up summary + clearing, hide checklist, restore, readable columns, Stone). The main suite starts with READABLE_V1/STONE_V1 set so column positions stay put; those two upgrades are tested at the end. Run it before every push that touches `src/Code.gs`, and add checks for new behaviour – the owner can't debug Apps Script. For `src/Index.html`, at least confirm the script parses: replace `<?= … ?>` scriptlets with a placeholder and run it through `new Function`.
+`node tests/backend.test.js` runs 124 checks against a mock of SpreadsheetApp/Utilities/etc. (sign-in, lockout, sheet upgrade, ticks, add/edit/remove, Edit Log, notes, startup, trade codes, added-by, job-only edits, removal log, clean-up summary + clearing, hide checklist, restore, readable columns, Stone, checklist 0). The main suite starts with READABLE_V1/STONE_V1 set so column positions stay put; those two upgrades are tested at the end. Run it before every push that touches `src/Code.gs`, and add checks for new behaviour – the owner can't debug Apps Script. For `src/Index.html`, at least confirm the script parses: replace `<?= … ?>` scriptlets with a placeholder and run it through `new Function`.
 
 ## Open items / ideas not yet requested
 - Admin features the owner may want later (master edits/retiring stay on the sheet by her rule): archive finished jobs, manage users/PINs from the app.

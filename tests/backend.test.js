@@ -230,4 +230,15 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  const T=sheets['Trades'].data;ok(T.some(r=>r[0]==='12370'&&r[1]==='Stone')&&!T.some(r=>r[1]==='Stone Countertops'),'Trades tab: 12370 Stone');
  const ix=sheets['Items'].data[0].indexOf('Trade');ok(sheets['Items'].data.find(r=>r[0]==='t900')[ix]==='Stone','Stone Countertops tasks moved to Stone');
  ok(A.getJob(ta,J.id).trades.find(x=>x.name==='Stone').code==='12370','heading code for Stone is 12370');}
+// checklist 0 – Project management to do – admins only
+{const ta=A.login('Mark Ellis',sheets['Users'].data[1][4]).token,tc=r3t();const J=A.createJob(ta,'PM test','');
+ ok(A.addItems(ta,J.id,'job',[{list:0,trade:'Site Supervisor',text:'Order windows'}])===1,'admin adds a task to checklist 0');
+ try{A.addItems(tc,J.id,'job',[{list:0,trade:'Site Supervisor',text:'Sneaky'}]);ok(false,'crew add 0')}catch(e){ok(/Only admins/.test(e.message),'crew cannot add to checklist 0')}
+ const t0=A.getJob(ta,J.id).items.find(i=>i.text==='Order windows');ok(t0&&t0.list===0,'admin sees the checklist 0 task');
+ A.setCheck(ta,J.id,t0.id,0,'Done');A.addNote(ta,J.id,t0.id,0,'PO 123');
+ const dc=A.getJob(tc,J.id);ok(!dc.items.some(i=>i.list===0)&&!dc.checks[t0.id]&&!dc.notes[t0.id],'crew get no checklist 0 tasks, ticks or notes');
+ ok(!A.startup(tc,J.id).job.items.some(i=>i.list===0)&&A.startup(ta,J.id).job.items.some(i=>i.list===0),'same at start-up');
+ ok(sheets['Notes'].data.slice(-1)[0][sheets['Notes'].data[0].indexOf('Checklist')]===0,'note on checklist 0 keeps checklist number 0');
+ sheets['Items'].data.push(['t950','','Framing','','','No checklist number','',999,'Y']);
+ ok(!A.getJob(ta,J.id).items.some(i=>i.id==='t950'&&i.list===0),'a blank Checklist cell never lands in checklist 0');}
 

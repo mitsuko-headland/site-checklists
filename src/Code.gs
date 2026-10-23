@@ -20,9 +20,10 @@ const SESSION_DAYS = 30;
 const MAX_FAILS = 5;            // wrong PINs allowed per name …
 const LOCK_MINUTES = 15;        // … before that name is locked for this long
 const CHECKLISTS = 6;           // 1 Project Startup & Site Protection … 6 Finishing
-const LIST_NAMES = ['', 'Project Startup & Site Protection', 'Demolition', 'Pre-Rough In', 'Rough In & Pre-Drywall', 'Drywall', 'Finishing'];
+const ADMIN_LIST = 0;            // checklist 0 – Project management to do – admins only
+const LIST_NAMES = ['Project management to do', 'Project Startup & Site Protection', 'Demolition', 'Pre-Rough In', 'Rough In & Pre-Drywall', 'Drywall', 'Finishing'];
 const LABEL_TABS = ['Job Items', 'Check Log', 'Notes', 'Edit Log'];   // tabs that get readable Job Name + Task columns
-const SETUP_TEXT_VERSION = '7';
+const SETUP_TEXT_VERSION = '8';
 const NOTE_MAX = 2000;          // longest note accepted, in characters  // bump to rewrite the Setup tab after instructions change
 /* Trade codes (from Headland's divisions list). Seeds the Trades tab the first time; after that the tab is the source. */
 const TRADES = [['1036', 'Mobilize & Startup Site Protection'], ['1050', 'Site Supervisor'], ['2001', 'Hazardous Demolition'], ['2006', 'Demolition'],
@@ -97,6 +98,7 @@ function taskLabel_(jobId, itemId) {
   const it = raw_('Items').find(r => String(r['ItemID']) === itemId);
   return it ? String(it['Item'] || '') : '';
 }
+function cl_(v) { return v === '' || v === null || v === undefined ? -1 : Number(v); }   // blank checklist ≠ checklist 0
 function yes_(v) { return String(v).trim().toUpperCase().startsWith('Y'); }
 function critical_(v) { return /CRIT|HOLD|^Y/i.test(String(v || '').trim()); }
 function fmt_(d) { return d instanceof Date ? Utilities.formatDate(d, TZ, 'MMM d, h:mm a') : String(d || ''); }
@@ -471,7 +473,7 @@ function writeSetupTab_(ss) {
     'WHO CAN SIGN IN',
     'People on the Users tab, with their Name and PIN. Active must start with Y to allow sign-in (blank or N blocks, immediately). Admin starting with Y lets that person add items to the master list from the app. Everyone can edit or remove any task in the app, but only for the job they are on; every change is in Edit Log. To change a master-list task on every job, edit it here on the Items tab. A name is locked for 15 minutes after 5 wrong PINs. Sign-ins last 30 days on each phone.', '',
     'CHECKLISTS (the Checklist column on Items)',
-    '1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough In · 4 Rough In & Pre-Drywall · 5 Drywall · 6 Finishing', '',
+    '0 Project management to do (admins only – nobody else sees it, its tasks, ticks or notes) · 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough In · 4 Rough In & Pre-Drywall · 5 Drywall · 6 Finishing', '',
     'TABS',
     'Users – the authorised list (Name | PIN | Active | Admin).',
     'Items – the master checklist every job uses. Critical = CRITICAL marks a stop-point item. Set Active = N to retire an item. Do not change ItemID.',
@@ -551,7 +553,7 @@ function startup(token, jobId) {
   let job = null;
   jobId = String(jobId || '');
   if (jobId && jobs.some(j => j.id === jobId)) { try { job = job_(jobId); } catch (e) { job = null; } }
-  return { me: { name: u.name, admin: u.admin }, jobs: jobs, job: job };
+  return { me: { name: u.name, admin: u.admin }, jobs: jobs, job: forUser_(job, u) };
 }
 
 /* ---------------- jobs ---------------- */
@@ -574,7 +576,16 @@ function createJob(token, name, address) {
 }
 
 /** Everything for one job: all checklists' items plus the latest status of each. */
-function getJob(token, jobId) { user_(token); return job_(jobId); }
+function getJob(token, jobId) { const u = user_(token); return forUser_(job_(jobId), u); }
+/* Checklist 0 (Project management to do) is admins only: its tasks, ticks and notes never reach anyone else. */
+function forUser_(d, u) {
+  if (!d || u.admin) return d;
+  const ids = new Set(d.items.filter(i => i.list === ADMIN_LIST).map(i => i.id));
+  if (!ids.size) return d;
+  d.items = d.items.filter(i => i.list !== ADMIN_LIST);
+  ids.forEach(id => { delete d.checks[id]; delete d.notes[id]; });
+  return d;
+}
 function job_(jobId) {
   jobId = String(jobId);
   const job = rows_('Jobs').find(j => String(j['JobID']) === jobId);
@@ -588,7 +599,7 @@ function job_(jobId) {
   rows_('Items').forEach(r => {
     const id = String(r['ItemID']);
     if (!id || hidden.has(id) || (String(r['Active']).trim() && !yes_(r['Active']))) return;
-    const it = { id: id, src: 'm', list: Number(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: Number(r['Order']) || 0 };
+    const it = { id: id, src: 'm', list: cl_(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: Number(r['Order']) || 0 };
     const e = edits[id];
     if (e) { it.text = String(e['Item']); it.trade = String(e['Trade'] || 'General'); it.area = String(e['Area'] || ''); it.critical = critical_(e['Critical']); it.edited = true; }
     items.push(it);
@@ -599,7 +610,7 @@ function job_(jobId) {
     .sort((a, b) => (at(b) - at(a)) || (a._row - b._row))
     .forEach((r, k) => {
       // job-only tasks carry who added them and the day (master-list tasks never do)
-      items.push({ id: String(r['ItemID']), src: 'j', list: Number(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: -1e6 + k, addedBy: String(r['Added By'] || '').trim(), addedOn: day_(r['Added At']) });
+      items.push({ id: String(r['ItemID']), src: 'j', list: cl_(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: -1e6 + k, addedBy: String(r['Added By'] || '').trim(), addedOn: day_(r['Added At']) });
     });
   const checks = {};
   rows_('Check Log').forEach(r => {           // later rows win, so this is the current status
@@ -633,7 +644,7 @@ function addNote(token, jobId, itemId, list, text) {
   // the lock is only needed the first time, to create the Notes tab.
   if (!SpreadsheetApp.getActive().getSheetByName('Notes')) withLock_(ensureNotes_);
   const now = new Date();
-  append_('Notes', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Checklist': Number(list) || '', 'Note': text, 'Name': u.name, 'Timestamp': now });
+  append_('Notes', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Checklist': isNaN(Number(list)) || list === '' ? '' : Number(list), 'Note': text, 'Name': u.name, 'Timestamp': now });
   return { text: text, name: u.name, at: fmt_(now) };
 }
 function ensureNotes_() {
@@ -657,7 +668,8 @@ function setCheck(token, jobId, itemId, list, status) {
 /** rows: [{list, trade, area, critical, text}], scope: 'job' or 'all' (master list – Admin only). */
 function addItems(token, jobId, scope, rows) {
   const u = user_(token);
-  rows = (rows || []).filter(r => r && String(r.text || '').trim() && Number(r.list) >= 1 && Number(r.list) <= CHECKLISTS);
+  rows = (rows || []).filter(r => r && String(r.text || '').trim() && r.list !== '' && r.list !== null && Number(r.list) >= 0 && Number(r.list) <= CHECKLISTS);
+  if (rows.some(r => Number(r.list) === ADMIN_LIST) && !u.admin) throw new Error('Only admins can add to Project management to do.');
   if (!rows.length) throw new Error('Nothing to add.');
   if (scope === 'all' && !u.admin) throw new Error('Only admins can add to the master list. Choose "This job only" or ask the office.');
   return withLock_(() => {
