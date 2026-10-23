@@ -370,23 +370,32 @@ function keepHeading(t,y){const sec=[...document.querySelectorAll('.tsec')].find
 function scrollToY(target){const pad=$('foldPad'),max=document.documentElement.scrollHeight-window.innerHeight;
   pad.style.height=Math.max(0,pad.offsetHeight+target-max)+'px';window.scrollTo(0,target);}
 /* "+" on a trade heading: add tasks to that trade, this job only. */
-function openQuickAdd(t){if(S.qadd!==t){S.qadd=t;S.qaddDraft={text:'',area:'',crit:false,busy:false};}S.fold[t]=false;renderList();
+function openQuickAdd(t){if(S.qadd!==t){S.qadd=t;S.qaddDraft={text:'',area:'',crit:false,busy:false,trade:t,scope:'job'};}S.fold[t]=false;renderList();
   // put the heading + typing box at the top of the screen so the phone keyboard does not cover it
   const sec=[...document.querySelectorAll('.tsec')].find(x=>x.dataset.trade===t);
   if(sec)scrollToY(window.scrollY+sec.getBoundingClientRect().top-document.querySelector('header.top').getBoundingClientRect().height);
   const ta=document.querySelector('.qadd textarea');if(ta)ta.focus({preventScroll:true});}
-function quickAdd(t){const dr=S.qaddDraft;
-  const ta=el('textarea',{'aria-label':'New tasks for '+t,placeholder:'One task per line'});ta.value=dr.text;ta.addEventListener('input',()=>dr.text=ta.value);
+/* "+" on a trade heading: the same form as "+ Add items", with the trade filled in (it can still be changed).
+   "All jobs (master list)" is for admins only; the default is always "This job only". */
+function quickAdd(t){const dr=S.qaddDraft;const admin=!!(S.me&&S.me.admin);
+  const ta=el('textarea',{'aria-label':'New tasks','placeholder':'One task per line'});ta.value=dr.text;ta.addEventListener('input',()=>dr.text=ta.value);
+  const tp=tradePicker(dr.trade||t);tp.el.addEventListener('change',()=>dr.trade=tp.value());tp.el.addEventListener('input',()=>dr.trade=tp.value());
   const area=el('input',{placeholder:'Area (optional)','aria-label':'Area'});area.value=dr.area;area.addEventListener('input',()=>dr.area=area.value);
   const crit=el('input',{type:'checkbox',style:'width:24px;height:24px;min-height:0'});crit.checked=dr.crit;crit.addEventListener('change',()=>dr.crit=crit.checked);
-  const save=el('button',{class:'btn primary',type:'button',text:'Add to this job'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});save.disabled=dr.busy;
+  const scope=el('select',{'aria-label':'Add to'},el('option',{value:'job',text:'This job only'}),el('option',{value:'all',text:'All jobs (master list – admins)'}));
+  scope.options[1].disabled=!admin;scope.value=admin?dr.scope:'job';scope.addEventListener('change',()=>dr.scope=scope.value);
+  const save=el('button',{class:'btn primary',type:'button',text:'Add tasks'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});save.disabled=dr.busy;
   cancel.onclick=()=>{S.qadd=null;renderList();};
-  save.onclick=()=>{const lines=ta.value.split('\n').map(x=>x.trim()).filter(Boolean);if(!lines.length){toast('Type at least one task');return;}dr.busy=true;save.disabled=true;
-    call('addItems',S.token,S.job.id,'job',lines.map(text=>({list:S.list,trade:t,area:area.value.trim(),critical:crit.checked,text})))
-      .then(n=>{S.qadd=null;toast(n+' task'+(n>1?'s':'')+' added to this job');return loadJob();})
+  save.onclick=()=>{const lines=ta.value.split('\n').map(x=>x.trim()).filter(Boolean);if(!lines.length){toast('Type at least one task');return;}
+    const trade=tp.value();if(!trade){toast('Choose a trade');return;}const where=scope.value==='all'&&admin?'all':'job';
+    dr.busy=true;save.disabled=true;
+    call('addItems',S.token,S.job.id,where,lines.map(text=>({list:S.list,trade:trade,area:area.value.trim(),critical:crit.checked,text})))
+      .then(n=>{S.qadd=null;toast(n+' task'+(n>1?'s':'')+' added '+(where==='all'?'to the master list (every job)':'to this job'));return loadJob();})
       .catch(x=>{dr.busy=false;if(S.list)renderList();toast(x.message);});};
-  return el('div',{class:'qadd'},el('label',{class:'f'},document.createTextNode('New '+t+' tasks – this job only, one per line'),ta),area,
-    el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),el('div',{class:'row'},save,cancel));}
+  return el('div',{class:'qadd'},el('label',{class:'f'},document.createTextNode('New tasks – one per line'),ta),
+    el('div',{class:'grid2'},el('label',{class:'f'},document.createTextNode('Trade'),tp.el),el('label',{class:'f'},document.createTextNode('Area'),area)),
+    el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),
+    el('label',{class:'f'},document.createTextNode('Add to'),scope),el('div',{class:'row'},save,cancel));}
 /* Editor (anyone signed in): wording, trade, area, critical – this job only; master tasks get a per-job EDIT row. */
 /* The open form is kept in S.editor and re-attached after every redraw (loads, ticks, auto-refresh),
    so it only ever closes on Save / Remove task / Cancel, and keeps everything typed in it. */

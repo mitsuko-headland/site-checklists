@@ -5,7 +5,7 @@ function mkSheet(head,rows){const data=[head,...rows];const sh={data,
  getDataRange(){return{getValues:()=>data.map(r=>r.slice())}},getLastColumn(){return Math.max(...data.map(r=>r.length))},getLastRow(){return data.length},getMaxRows(){return 1000},
  getRange(r,c,nr,nc){nr=nr||1;nc=nc||1;return{getValues:()=>{const o=[];for(let i=0;i<nr;i++){const row=data[r-1+i]||[];o.push(Array.from({length:nc},(_,j)=>row[c-1+j]??''));}return o;},
    setValues(v){v.forEach((row,i)=>{data[r-1+i]=data[r-1+i]||[];row.forEach((x,j)=>data[r-1+i][c-1+j]=x);});return this},setValue:v=>{data[r-1]=data[r-1]||[];data[r-1][c-1]=v},setNumberFormat(){},setWrap(){return this},setFontSize(){return this},setFontWeight(){return this}}},
- appendRow(r){data.push(r)},clear(){data.length=0},deleteRows(s,n){data.splice(s-1,n)},deleteRow(s){data.splice(s-1,1)}};return sh;}
+ appendRow(r){data.push(r)},clear(){data.length=0},insertColumnAfter(c){const w=Math.max(...data.map(r=>r.length));data.forEach(r=>{while(r.length<w)r.push('');r.splice(c,0,'');});},deleteRows(s,n){data.splice(s-1,n)},deleteRow(s){data.splice(s-1,1)}};return sh;}
 const sheets={
  'Setup':mkSheet(['old'],[['x']]),
  'Users':mkSheet(['Name','Email','Active','Admin'],[['Mark Ellis','m@h.com','Y','Y'],['Joe Site','','Y','N']]),
@@ -13,7 +13,7 @@ const sheets={
  'Jobs':mkSheet(['JobID','Job Name','Address','Created By','Created At','Active'],[['J1','Old Job','1 St','Mark',new Date(),'Y']]),
  'Job Items':mkSheet(['JobID','ItemID','Type','Walk','Trade','Area','Hold','Item','Added By','Added At','Removed'],[['J1','X1','Item',1,'Plumbing','','HOLD','Job extra','Mark',new Date(),''],['J1','X2','Item',2,'Siding','','','Siding nailed','Mark',new Date(),'']]),
  'Check Log':mkSheet(['JobID','ItemID','Walk','Status','Name','Timestamp'],[['J1','t001',2,'Done','Mark',new Date()]])};
-const props={},cache={};
+const props={READABLE_V1:'done',STONE_V1:'done'},cache={};   // readable columns + Stone are tested at the end, so earlier column positions stay put
 const ctx={SpreadsheetApp:{getActive:()=>({getSheetByName:n=>sheets[n]||null,insertSheet:n=>{sheets[n]=mkSheet([],[]);sheets[n].data.length=0;sheets[n].setFrozenRows=()=>{};return sheets[n];}})},
  PropertiesService:{getScriptProperties:()=>({getProperty:k=>props[k]||null,setProperty:(k,v)=>props[k]=v})},
  CacheService:{getScriptCache:()=>({get:k=>cache[k]??null,put:(k,v)=>cache[k]=v,remove:k=>delete cache[k]})},
@@ -21,7 +21,7 @@ const ctx={SpreadsheetApp:{getActive:()=>({getSheetByName:n=>sheets[n]||null,ins
  Utilities:{getUuid:()=>crypto.randomUUID(),computeHmacSha256Signature:(p,s)=>[...crypto.createHmac('sha256',s).update(p).digest()],
   base64EncodeWebSafe:x=>Buffer.from(typeof x==='string'?x:Buffer.from(x.map(b=>b&255))).toString('base64').replace(/\+/g,'-').replace(/\//g,'_'),
   base64DecodeWebSafe:s=>[...Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64')],newBlob:b=>({getDataAsString:()=>Buffer.from(b.map(x=>x&255)).toString()}),formatDate:d=>d.toISOString().slice(5,16)}};
-const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup,cleanupReport_,cleanupRun_,setListHidden,restoreHidden_};')(...Object.values(ctx));
+const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup,cleanupReport_,cleanupRun_,setListHidden,restoreHidden_,readableUpgrade_,stoneUpgrade_};')(...Object.values(ctx));
 const ok=(c,m)=>{if(!c){console.log('FAIL',m);process.exitCode=1}else console.log('ok',m)};
 // login before PINs exist -> rejected, but upgrade runs
 try{A.login('Mark Ellis','1');ok(false,'no pin')}catch(e){console.log('   msg:',e.message);ok(/not recognised/.test(e.message),'no PIN yet -> rejected')}
@@ -204,4 +204,30 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  ok(A.restoreHidden_(ctx.SpreadsheetApp.getActive(),J.id,'t002','Mitsuko')===1,'one HIDE row deleted');
  ok(A.getJob(ta,J.id).items.some(i=>i.id==='t002')&&!A.getJob(ta,K.id).items.some(i=>i.id==='t002'),'task back on that job only');
  ok(sheets['Edit Log'].data.some(r=>r[2]===J.id&&r[3]==='t002'&&r[4]==='Restored to job'),'restore is logged');}
+// readable Job Name + Task columns on the log tabs, then filled on every new row
+{const ss=ctx.SpreadsheetApp.getActive(),ta=A.login('Mark Ellis',sheets['Users'].data[1][4]).token;
+ const P=sheets['Jobs'].data.find(r=>r[1]==='Park')[0];
+ A.readableUpgrade_(ss);
+ const hd=n=>sheets[n].data[0];
+ ok(['Job Items','Check Log','Notes','Edit Log'].every(n=>{const h=hd(n);return h[h.indexOf('JobID')+1]==='Job Name'&&h[h.indexOf('ItemID')+1]==='Task';}),'Job Name after JobID and Task after ItemID on all four log tabs');
+ const CL=sheets['Check Log'].data,ci=c=>hd('Check Log').indexOf(c);
+ ok(CL.slice(1).every(r=>r[ci('Job Name')]===(sheets['Jobs'].data.find(j=>j[0]===r[ci('JobID')])||[])[1]),'existing Check Log rows filled with the job name');
+ ok(CL.slice(1).some(r=>r[ci('ItemID')]==='t001'&&r[ci('Task')]==='Backing installed'),'existing rows filled with the task wording');
+ const EL=sheets['Edit Log'].data,ei=c=>hd('Edit Log').indexOf(c);
+ ok(EL.slice(1).some(r=>r[ei('JobID')]==='(all jobs)'&&r[ei('Job Name')]==='All jobs')&&EL.slice(1).some(r=>/^Checklist 5/.test(r[ei('ItemID')])&&r[ei('Task')]==='Checklist 5 – Drywall'),'"(all jobs)" and checklist rows get readable labels');
+ A.readableUpgrade_(ss);ok(hd('Check Log').filter(c=>c==='Job Name').length===1,'running it again adds no extra columns');
+ const J=A.createJob(ta,'Butt','');A.setCheck(ta,J.id,'t001',4,'Done');
+ const last=sheets['Check Log'].data.slice(-1)[0];ok(last[ci('Job Name')]==='Butt'&&last[ci('Task')]==='Backing installed'&&last[ci('Status')]==='Done','new ticks are written with job name and task');
+ A.addItems(ta,J.id,'job',[{list:3,trade:'Framing',text:'Readable task'}]);const ji=sheets['Job Items'].data.slice(-1)[0],jx=c=>hd('Job Items').indexOf(c);
+ ok(ji[jx('Job Name')]==='Butt'&&ji[jx('Task')]==='Readable task','new job tasks carry job name and task');
+ A.editItem(ta,J.id,'t001','m',{text:'Backing installed (Butt)',trade:'Framing',area:'',critical:false});
+ A.setCheck(ta,J.id,'t001',4,'Cleared');ok(sheets['Check Log'].data.slice(-1)[0][ci('Task')]==='Backing installed (Butt)','task label uses this job\'s own wording');
+ ok(A.getJob(ta,J.id).checks['t001']===null&&A.getJob(ta,J.id).items.some(i=>i.text==='Readable task'),'app still reads everything after the new columns');
+ // Stone
+ sheets['Items'].data.push(['t900',6,'Stone Countertops','','','Countertop seams checked','',99,'Y']);
+ sheets['Trades'].data.find(r=>r[1]==='Stone')[1]='Stone Countertops';   // as on the live sheet today
+ A.stoneUpgrade_(ss);
+ const T=sheets['Trades'].data;ok(T.some(r=>r[0]==='12370'&&r[1]==='Stone')&&!T.some(r=>r[1]==='Stone Countertops'),'Trades tab: 12370 Stone');
+ const ix=sheets['Items'].data[0].indexOf('Trade');ok(sheets['Items'].data.find(r=>r[0]==='t900')[ix]==='Stone','Stone Countertops tasks moved to Stone');
+ ok(A.getJob(ta,J.id).trades.find(x=>x.name==='Stone').code==='12370','heading code for Stone is 12370');}
 

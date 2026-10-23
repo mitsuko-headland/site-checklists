@@ -20,13 +20,15 @@ const SESSION_DAYS = 30;
 const MAX_FAILS = 5;            // wrong PINs allowed per name …
 const LOCK_MINUTES = 15;        // … before that name is locked for this long
 const CHECKLISTS = 6;           // 1 Project Startup & Site Protection … 6 Finishing
-const SETUP_TEXT_VERSION = '6';
+const LIST_NAMES = ['', 'Project Startup & Site Protection', 'Demolition', 'Pre-Rough In', 'Rough In & Pre-Drywall', 'Drywall', 'Finishing'];
+const LABEL_TABS = ['Job Items', 'Check Log', 'Notes', 'Edit Log'];   // tabs that get readable Job Name + Task columns
+const SETUP_TEXT_VERSION = '7';
 const NOTE_MAX = 2000;          // longest note accepted, in characters  // bump to rewrite the Setup tab after instructions change
 /* Trade codes (from Headland's divisions list). Seeds the Trades tab the first time; after that the tab is the source. */
 const TRADES = [['1036', 'Mobilize & Startup Site Protection'], ['1050', 'Site Supervisor'], ['2001', 'Hazardous Demolition'], ['2006', 'Demolition'],
   ['3601', 'Concrete'], ['5160', 'Metalwork'], ['6101', 'Framing'], ['6715', 'Exterior Carpentry'], ['6815', 'Finish Carpentry'], ['7201', 'Roofing'],
   ['7501', 'Insulation'], ['8102', 'Windows'], ['8202', 'Doors'], ['8501', 'Glass & Mirror'], ['9001', 'Drywall'], ['9210', 'Painting'], ['9215', 'Wallpaper'],
-  ['9401', 'Flooring'], ['9601', 'Tile'], ['10400', 'Fireplace'], ['11500', 'Appliance Installer'], ['12350', 'Millwork'], ['12370', 'Stone Countertops'],
+  ['9401', 'Flooring'], ['9601', 'Tile'], ['10400', 'Fireplace'], ['11500', 'Appliance Installer'], ['12350', 'Millwork'], ['12370', 'Stone'],
   ['15201', 'Gas Fitter'], ['15201', 'Plumbing'], ['15319', 'HVAC'], ['15555', 'Sprinklers'], ['16500', 'Electrical'], ['16700', 'Low Voltage / AV'], ['21100', 'Landscaping']];
 /* One-time trade moves (old trade, lower case -> new trade), done with the trade codes change. */
 const TRADE_MOVES = { 'energy consultant': 'Site Supervisor', 'eavestrough': 'Metalwork', 'siding': 'Exterior Carpentry', 'surveyor': 'Site Supervisor',
@@ -61,7 +63,39 @@ function rows_(name) {
 }
 function append_(name, obj) {
   const sh = sheet_(name);
-  sh.appendRow(head_(sh).map(h => (obj[h] === undefined ? '' : obj[h])));
+  const head = head_(sh);
+  // readable copies of the IDs, as they are at the time of writing (only where the tab has the columns)
+  if (head.indexOf('Job Name') >= 0 && obj['Job Name'] === undefined && obj['JobID'] !== undefined) obj['Job Name'] = jobLabel_(obj['JobID']);
+  if (head.indexOf('Task') >= 0 && obj['Task'] === undefined && obj['ItemID'] !== undefined) obj['Task'] = taskLabel_(obj['JobID'], obj['ItemID']);
+  sh.appendRow(head.map(h => (obj[h] === undefined ? '' : obj[h])));
+}
+/* Raw tab read with no upgrade step – safe to call from anything upgrade_ runs. */
+function raw_(name) {
+  const sh = SpreadsheetApp.getActive().getSheetByName(name);
+  if (!sh || sh.getLastRow() < 2) return [];
+  const v = sh.getDataRange().getValues(), hd = v.shift().map(x => String(x).trim());
+  return v.map((r, i) => { const o = { _row: i + 2 }; hd.forEach((c, j) => o[c] = r[j]); return o; });
+}
+function jobLabel_(jobId) {
+  jobId = String(jobId || '');
+  if (!jobId) return '';
+  if (jobId === '(all jobs)') return 'All jobs';
+  const j = raw_('Jobs').find(r => String(r['JobID']) === jobId);
+  return j ? String(j['Job Name']) : '';
+}
+function taskLabel_(jobId, itemId) {
+  jobId = String(jobId || ''); itemId = String(itemId || '');
+  const m = /^(?:Checklist |L)(\d)$/.exec(itemId);
+  if (m) return 'Checklist ' + m[1] + ' – ' + (LIST_NAMES[Number(m[1])] || '');
+  let ji = null;
+  raw_('Job Items').forEach(r => {               // this job's own wording wins (EDIT / job-only task), latest row last
+    if (String(r['JobID']) !== jobId || String(r['ItemID']) !== itemId) return;
+    const t = String(r['Type']).trim().toUpperCase();
+    if (t === 'EDIT' || t === 'ITEM') ji = r;
+  });
+  if (ji) return String(ji['Item'] || '');
+  const it = raw_('Items').find(r => String(r['ItemID']) === itemId);
+  return it ? String(it['Item'] || '') : '';
 }
 function yes_(v) { return String(v).trim().toUpperCase().startsWith('Y'); }
 function critical_(v) { return /CRIT|HOLD|^Y/i.test(String(v || '').trim()); }
@@ -88,7 +122,7 @@ function withLock_(fn) {
 function setup() { CacheService.getScriptCache().remove('schema'); upgrade_(); return 'Sheet is up to date.'; }
 function upgrade_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('schema') === '7') return;
+  if (cache.get('schema') === '8') return;
   withLock_(() => {
     const ss = SpreadsheetApp.getActive();
     // Users
@@ -142,12 +176,14 @@ function upgrade_() {
     if (!props.getProperty('PARK_CLEAN_V1')) { props.setProperty('PARK_CLEAN_V1', 'started');
       try { cleanupRun_(ss, 'Park', 'Mitsuko', 'Park Cleanup'); props.setProperty('PARK_CLEAN_V1', 'done'); } catch (e) { props.setProperty('PARK_CLEAN_V1', 'error: ' + e.message); }
       props.setProperty('PARK_REPORT_V1', 'done'); }
+    if (!props.getProperty('READABLE_V1')) { try { readableUpgrade_(ss); props.setProperty('READABLE_V1', 'done'); } catch (e) { props.setProperty('READABLE_V1', 'error: ' + e.message); } }
+    if (!props.getProperty('STONE_V1')) { try { stoneUpgrade_(ss); props.setProperty('STONE_V1', 'done'); } catch (e) { props.setProperty('STONE_V1', 'error: ' + e.message); } }
     if (!props.getProperty('RESTORE_T112_V1')) { try { restoreHidden_(ss, 'JMVICS4598Q', 't112', 'Mitsuko'); } catch (e) { } props.setProperty('RESTORE_T112_V1', 'done'); }
     if (!props.getProperty('PARK_REPORT_V1')) { try { cleanupReport_(ss, 'Park', 'Mitsuko', 'Park Cleanup'); } catch (e) { /* report is optional */ } props.setProperty('PARK_REPORT_V1', 'done'); }
     if (itemsUpgraded || props.getProperty('SETUP_TEXT') !== SETUP_TEXT_VERSION) {
       try { writeSetupTab_(ss); props.setProperty('SETUP_TEXT', SETUP_TEXT_VERSION); } catch (e) { /* instructions tab is optional */ }
     }
-    cache.put('schema', '7', 21600);
+    cache.put('schema', '8', 21600);
   });
 }
 /* Trade codes: creates the Trades tab, then (once) moves items off retired trades.
@@ -368,6 +404,63 @@ function restoreHidden_(ss, jobId, itemId, person) {
   if (n) { ensureEditLog_(); append_('Edit Log', { 'Timestamp': new Date(), 'Name': 'Claude (asked by ' + person + ')', 'JobID': jobId, 'ItemID': itemId, 'Field': 'Restored to job', 'Old Value': 'Removed', 'New Value': 'Back on this job' }); }
   return n;
 }
+/* One-time: add a readable "Job Name" column after JobID and "Task" after ItemID on the log tabs, filled for
+ * every existing row (current names/wording, since the wording at the time wasn't recorded – except
+ * "Removed from job" rows, whose Old Value is the wording at the time). */
+function readableUpgrade_(ss) {
+  const jobs = {}; raw_('Jobs').forEach(r => { jobs[String(r['JobID'])] = String(r['Job Name']); });
+  const master = {}; raw_('Items').forEach(r => { master[String(r['ItemID'])] = String(r['Item'] || ''); });
+  const own = {}; raw_('Job Items').forEach(r => { const t = String(r['Type']).trim().toUpperCase(); if (t === 'EDIT' || t === 'ITEM') own[String(r['JobID']) + '|' + String(r['ItemID'])] = String(r['Item'] || ''); });
+  const jl = id => id === '(all jobs)' ? 'All jobs' : (jobs[id] || '');
+  const tl = (j, i, row) => {
+    const m = /^(?:Checklist |L)(\d)$/.exec(i);
+    if (m) return 'Checklist ' + m[1] + ' – ' + (LIST_NAMES[Number(m[1])] || '');
+    if (row && String(row['Field']) === 'Removed from job' && String(row['Old Value'] || '')) return String(row['Old Value']);
+    return own[j + '|' + i] !== undefined ? own[j + '|' + i] : (master[i] || '');
+  };
+  LABEL_TABS.forEach(name => {
+    const sh = ss.getSheetByName(name);
+    if (!sh) return;
+    [['JobID', 'Job Name'], ['ItemID', 'Task']].forEach(([idCol, label]) => {
+      let hd = head_(sh);
+      if (hd.indexOf(label) >= 0 || hd.indexOf(idCol) < 0) return;
+      const at = hd.indexOf(idCol) + 1;           // 1-based column of the ID
+      sh.insertColumnAfter(at);
+      sh.getRange(1, at + 1).setValue(label);
+      const n = sh.getLastRow() - 1;
+      if (n < 1) return;
+      hd = head_(sh);
+      const v = sh.getRange(2, 1, n, hd.length).getValues();
+      const out = v.map(r => { const o = {}; hd.forEach((c, k) => o[c] = r[k]);
+        return [label === 'Job Name' ? jl(String(o['JobID'])) : tl(String(o['JobID']), String(o['ItemID']), o)]; });
+      sh.getRange(2, at + 1, n, 1).setValues(out);
+    });
+  });
+}
+/* One-time (owner request 2026-10-23): the trade "Stone Countertops" is called "Stone" (code 12370). */
+function stoneUpgrade_(ss) {
+  const tr = ss.getSheetByName('Trades');
+  if (tr && tr.getLastRow() > 1) {
+    const v = tr.getRange(2, 1, tr.getLastRow() - 1, 2).getValues();
+    const hasStone = v.some(r => String(r[1]).trim().toLowerCase() === 'stone');
+    v.forEach((r, i) => { if (String(r[1]).trim().toLowerCase() === 'stone countertops') { if (hasStone) tr.getRange(i + 2, 2).setValue('Stone'); else tr.getRange(i + 2, 2).setValue('Stone'); if (!String(r[0]).trim()) tr.getRange(i + 2, 1).setValue('12370'); } });
+    if (!v.some(r => /^stone( countertops)?$/i.test(String(r[1]).trim()))) { tr.appendRow(['12370', 'Stone']); }
+  }
+  const now = new Date();
+  ['Items', 'Job Items'].forEach(tab => {
+    const sh = ss.getSheetByName(tab);
+    if (!sh || sh.getLastRow() < 2) return;
+    const hd = head_(sh), tc = hd.indexOf('Trade');
+    if (tc < 0) return;
+    const v = sh.getRange(2, 1, sh.getLastRow() - 1, hd.length).getValues();
+    const moved = [];
+    v.forEach(r => { if (String(r[tc]).trim().toLowerCase() === 'stone countertops') { r[tc] = 'Stone'; moved.push(r); } });
+    if (!moved.length) return;
+    sh.getRange(2, tc + 1, v.length, 1).setValues(v.map(r => [r[tc]]));
+    ensureEditLog_();
+    moved.forEach(r => append_('Edit Log', { 'Timestamp': now, 'Name': 'Setup (trade codes)', 'JobID': tab === 'Items' ? '(all jobs)' : String(r[hd.indexOf('JobID')]), 'ItemID': String(r[hd.indexOf('ItemID')]), 'Field': 'Trade', 'Old Value': 'Stone Countertops', 'New Value': 'Stone' }));
+  });
+}
 function writeSetupTab_(ss) {
   const s = ss.getSheetByName('Setup');
   if (!s) return;
@@ -386,6 +479,7 @@ function writeSetupTab_(ss) {
     'Job Items – tasks added to, removed from (HIDE) or changed for (EDIT) a single job from the app. Do not edit by hand.',
     'Check Log – every tick and untick, with name and date/time. Never edit or sort; it is the audit trail.',
     'Edit Log – every change and removal made to a task in the app: which job, old value, new value, who and when. Created automatically on the first edit.',
+    'Job Name and Task columns (on Job Items, Check Log, Notes and Edit Log) are readable copies of JobID / ItemID, written at the time. The app only uses the ID columns, which you can hide (right-click the column letter → Hide column). Never delete or rename the ID columns.',
     'Notes – notes people add to a task on one job, with name and date/time. Created automatically on the first note. Never edit or sort; the app shows them in this order.',
     'Trades – the code shown on each trade heading, and the order trades are sorted in (lowest code first). Change a code here any time. A trade name must match the Trade column on Items exactly (capitals don\'t matter). Trades with no code show at the end.'];
   let rep = null;
@@ -572,7 +666,8 @@ function addItems(token, jobId, scope, rows) {
       rows.forEach(r => append_('Items', { 'ItemID': newId_('M'), 'Checklist': Number(r.list), 'Trade': String(r.trade || 'General').trim(), 'Area': String(r.area || '').trim(), 'Critical': r.critical ? 'CRITICAL' : '', 'Item': String(r.text).trim(), 'Division': '', 'Order': ++order, 'Active': 'Y' }));
     } else {
       const now = new Date();       // one time for the whole batch, so the batch keeps its typed order
-      rows.forEach(r => append_('Job Items', { 'JobID': String(jobId), 'ItemID': newId_('X'), 'Type': 'Item', 'Checklist': Number(r.list), 'Trade': String(r.trade || 'General').trim(), 'Area': String(r.area || '').trim(), 'Critical': r.critical ? 'CRITICAL' : '', 'Item': String(r.text).trim(), 'Added By': u.name, 'Added At': now, 'Removed': '' }));
+      const jn = jobLabel_(jobId);
+      rows.forEach(r => append_('Job Items', { 'Job Name': jn, 'Task': String(r.text).trim(), 'JobID': String(jobId), 'ItemID': newId_('X'), 'Type': 'Item', 'Checklist': Number(r.list), 'Trade': String(r.trade || 'General').trim(), 'Area': String(r.area || '').trim(), 'Critical': r.critical ? 'CRITICAL' : '', 'Item': String(r.text).trim(), 'Added By': u.name, 'Added At': now, 'Removed': '' }));
     }
     return rows.length;
   });
