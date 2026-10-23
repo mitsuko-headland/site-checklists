@@ -9,6 +9,7 @@
  *   Check Log  : JobID | ItemID | Checklist | Status | Name | Timestamp
  *   Edit Log   : Timestamp | Name | JobID | ItemID | Field | Old Value | New Value   (created automatically)
  *   Notes      : JobID | ItemID | Checklist | Note | Name | Timestamp                 (created automatically)
+ *   Trades     : Code | Trade   – heading codes and sort order                      (created automatically)
  * Older sheets that still say "Walk" / "Hold" are upgraded automatically on first use (see upgrade_).
  */
 
@@ -17,8 +18,18 @@ const SESSION_DAYS = 30;
 const MAX_FAILS = 5;            // wrong PINs allowed per name …
 const LOCK_MINUTES = 15;        // … before that name is locked for this long
 const CHECKLISTS = 6;           // 1 Project Startup & Site Protection … 6 Finishing
-const SETUP_TEXT_VERSION = '4';
+const SETUP_TEXT_VERSION = '5';
 const NOTE_MAX = 2000;          // longest note accepted, in characters  // bump to rewrite the Setup tab after instructions change
+/* Trade codes (from Headland's divisions list). Seeds the Trades tab the first time; after that the tab is the source. */
+const TRADES = [['1036', 'Mobilize & Startup Site Protection'], ['1050', 'Site Supervisor'], ['2001', 'Hazardous Demolition'], ['2006', 'Demolition'],
+  ['3601', 'Concrete'], ['5160', 'Metalwork'], ['6101', 'Framing'], ['6715', 'Exterior Carpentry'], ['6815', 'Finish Carpentry'], ['7201', 'Roofing'],
+  ['7501', 'Insulation'], ['8102', 'Windows'], ['8202', 'Doors'], ['8501', 'Glass & Mirror'], ['9001', 'Drywall'], ['9210', 'Painting'], ['9215', 'Wallpaper'],
+  ['9401', 'Flooring'], ['9601', 'Tile'], ['10400', 'Fireplace'], ['11500', 'Appliance Installer'], ['12350', 'Millwork'], ['12370', 'Stone Countertops'],
+  ['15201', 'Gas Fitter'], ['15201', 'Plumbing'], ['15319', 'HVAC'], ['15555', 'Sprinklers'], ['16500', 'Electrical'], ['16700', 'Low Voltage / AV'], ['21100', 'Landscaping']];
+/* One-time trade moves (old trade, lower case -> new trade), done with the trade codes change. */
+const TRADE_MOVES = { 'energy consultant': 'Site Supervisor', 'eavestrough': 'Metalwork', 'siding': 'Exterior Carpentry', 'surveyor': 'Site Supervisor',
+  'cleaning': 'Site Supervisor', 'masonry (brick)': 'Exterior Carpentry', 'masonry (stone)': 'Exterior Carpentry', 'deck carpentry': 'Exterior Carpentry',
+  'parging': 'Concrete', 'closet shelving': 'Finish Carpentry' };
 
 /* ---------------- web app entry ---------------- */
 function doGet(e) {
@@ -74,7 +85,7 @@ function withLock_(fn) {
 function setup() { CacheService.getScriptCache().remove('schema'); upgrade_(); return 'Sheet is up to date.'; }
 function upgrade_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('schema') === '3') return;
+  if (cache.get('schema') === '4') return;
   withLock_(() => {
     const ss = SpreadsheetApp.getActive();
     // Users
@@ -123,11 +134,52 @@ function upgrade_() {
       }
       props.setProperty('STARTUP_ITEMS', 'added');
     }
+    tradesUpgrade_(ss, props);
     if (itemsUpgraded || props.getProperty('SETUP_TEXT') !== SETUP_TEXT_VERSION) {
       try { writeSetupTab_(ss); props.setProperty('SETUP_TEXT', SETUP_TEXT_VERSION); } catch (e) { /* instructions tab is optional */ }
     }
-    cache.put('schema', '3', 21600);
+    cache.put('schema', '4', 21600);
   });
+}
+/* Trade codes: creates the Trades tab, then (once) moves items off retired trades.
+ * Every move is written to Edit Log; a short report is kept for the Setup tab. */
+function tradesUpgrade_(ss, props) {
+  if (props.getProperty('TRADES_V1')) return;
+  if (!ss.getSheetByName('Trades')) {
+    const tr = ss.insertSheet('Trades');
+    tr.getRange(1, 1, 1, 2).setValues([['Code', 'Trade']]);
+    tr.getRange(2, 1, TRADES.length, 1).setNumberFormat('@');
+    tr.getRange(2, 1, TRADES.length, 2).setValues(TRADES);
+    tr.setFrozenRows(1);
+  }
+  const now = new Date(), moved = {}, logs = [], seen = {};
+  const key = t => String(t || '').replace(/^\d+\s*-\s*/, '').trim().toLowerCase();
+  ['Items', 'Job Items'].forEach(tab => {
+    const sh = ss.getSheetByName(tab);
+    if (!sh || sh.getLastRow() < 2) return;
+    const h = head_(sh), tc = h.indexOf('Trade'), ic = h.indexOf('ItemID'), cc = h.indexOf('Checklist'), jc = h.indexOf('JobID'), ty = h.indexOf('Type');
+    if (tc < 0) return;
+    const v = sh.getRange(2, 1, sh.getLastRow() - 1, h.length).getValues();
+    let changed = false;
+    v.forEach(r => {
+      if (ty >= 0 && String(r[ty]).toUpperCase() === 'HIDE') return;
+      const old = String(r[tc] || '').trim(), k = key(old);
+      let to = TRADE_MOVES[k];
+      if (!to && tab === 'Items' && /^S00[1-4]$/.test(String(r[ic])) && Number(r[cc]) === 1 && k === 'site supervisor') to = 'Mobilize & Startup Site Protection';
+      if (!to) { if (old) seen[k] = old; return; }
+      r[tc] = to; changed = true; seen[key(to)] = to;
+      const m = old + ' → ' + to; moved[m] = (moved[m] || 0) + 1;
+      logs.push({ 'Timestamp': now, 'Name': 'Setup (trade codes)', 'JobID': tab === 'Items' ? '(all jobs)' : String(r[jc]), 'ItemID': String(r[ic]), 'Field': 'Trade', 'Old Value': old, 'New Value': to });
+    });
+    if (changed) sh.getRange(2, tc + 1, v.length, 1).setValues(v.map(r => [r[tc]]));
+  });
+  if (logs.length) { ensureEditLog_(); logs.forEach(l => append_('Edit Log', l)); }
+  const coded = {};
+  const tr = ss.getSheetByName('Trades');
+  if (tr && tr.getLastRow() > 1) tr.getRange(2, 1, tr.getLastRow() - 1, 2).getValues().forEach(r => { if (String(r[1]).trim()) coded[key(r[1])] = 1; });
+  const uncoded = Object.keys(seen).filter(k => !coded[k]).map(k => seen[k]).sort();
+  props.setProperty('TRADES_V1_REPORT', JSON.stringify({ at: fmt_(now), moved: moved, uncoded: uncoded }));
+  props.setProperty('TRADES_V1', 'done');
 }
 function writeSetupTab_(ss) {
   const s = ss.getSheetByName('Setup');
@@ -147,7 +199,16 @@ function writeSetupTab_(ss) {
     'Job Items – items added to (or removed from) a single job from the app. Do not edit by hand.',
     'Check Log – every tick and untick, with name and date/time. Never edit or sort; it is the audit trail.',
     'Edit Log – every change admins make to an item in the app: old value, new value, who and when. Created automatically on the first edit.',
-    'Notes – notes people add to a task on one job, with name and date/time. Created automatically on the first note. Never edit or sort; the app shows them in this order.'];
+    'Notes – notes people add to a task on one job, with name and date/time. Created automatically on the first note. Never edit or sort; the app shows them in this order.',
+    'Trades – the code shown on each trade heading, and the order trades are sorted in (lowest code first). Change a code here any time. A trade name must match the Trade column on Items exactly (capitals don\'t matter). Trades with no code show at the end.'];
+  let rep = null;
+  try { rep = JSON.parse(PropertiesService.getScriptProperties().getProperty('TRADES_V1_REPORT') || 'null'); } catch (e) { rep = null; }
+  if (rep) {
+    lines.push('', 'TRADE CODES UPDATE (' + rep.at + ')');
+    const m = Object.keys(rep.moved || {});
+    if (m.length) m.forEach(k => lines.push('Moved ' + rep.moved[k] + ' item' + (rep.moved[k] > 1 ? 's' : '') + ': ' + k)); else lines.push('No items needed moving.');
+    lines.push(rep.uncoded && rep.uncoded.length ? 'Trades with no code (shown at the end of their checklist): ' + rep.uncoded.join(', ') : 'Every trade in use has a code.');
+  }
   s.clear();
   s.getRange(1, 1, lines.length, 1).setValues(lines.map(l => [l])).setWrap(true);
   s.getRange(1, 1).setFontSize(14).setFontWeight('bold');
@@ -266,7 +327,11 @@ function job_(jobId) {
       (notes[id] = notes[id] || []).push({ text: String(r['Note']), name: String(r['Name']), at: fmt_(r['Timestamp']) });
     });
   }
-  return { job: { id: jobId, name: String(job['Job Name']), address: String(job['Address'] || '') }, items: items, checks: checks, notes: notes };
+  const trades = [];
+  if (SpreadsheetApp.getActive().getSheetByName('Trades')) {
+    rows_('Trades').forEach(r => { const n = String(r['Trade'] || '').trim(); if (n) trades.push({ name: n, code: String(r['Code'] === undefined ? '' : r['Code']).trim() }); });
+  }
+  return { job: { id: jobId, name: String(job['Job Name']), address: String(job['Address'] || '') }, items: items, checks: checks, notes: notes, trades: trades };
 }
 
 /** Anyone signed in: add a note to a task on this job. Notes are a running log (one row each, never changed). */

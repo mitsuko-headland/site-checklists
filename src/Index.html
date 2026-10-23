@@ -213,6 +213,11 @@ function call(fn,...args){return new Promise((res,rej)=>google.script.run.withSu
 function toast(m){const t=$('toast');t.textContent=m;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,2800);}
 function show(v){['vStart','vLogin','vJobs','vLists','vList'].forEach(id=>$(id).hidden=id!==v);$('backBtn').hidden=!(v==='vLists'||v==='vList');window.scrollTo(0,0);}
 const tradeName=t=>String(t||'General').replace(/^\d+\s*-\s*/,'').trim()||'General';
+/* trade codes come from the sheet's Trades tab: shown on headings, and trades sort by code (no code = at the end) */
+const tkey=t=>tradeName(t).toLowerCase();
+function tradeTab(){const m=new Map();((S.data&&S.data.trades)||[]).forEach((x,k)=>{const n=tradeName(x.name);if(n&&!m.has(n.toLowerCase()))m.set(n.toLowerCase(),{name:n,code:String(x.code||'').trim(),k});});return m;}
+const codeNum=c=>{const n=parseFloat(String(c||'').replace(/[^0-9.]/g,''));return isNaN(n)?Infinity:n;};
+function tradeLabel(t,tab){const x=(tab||tradeTab()).get(tkey(t));return x&&x.code?x.code+' '+t:t;}
 const isDone=c=>!!(c&&(c.status==='Done'||c.status==='N/A'));
 function header(title,sub){$('brandName').textContent=title;$('sub').textContent=sub;if(typeof setHdr==='function')setHdr();}
 /* Shows a load error with a Try again button, and retries once by itself after a few seconds. */
@@ -279,7 +284,9 @@ function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checkl
   const items=itemsFor(S.list),s=stat(S.list),sum=$('summary');sum.textContent='';sum.append(el('b',{text:s.done+' of '+s.total+' done'}));if(s.crit)sum.append(el('span',{class:'pill hold',text:s.crit+' critical open'}));
   const g0=new Map();items.forEach(i=>{const t=tradeName(i.trade);if(!g0.has(t))g0.set(t,[]);g0.get(t).push(i);});
   const rank=l=>{const m=l.filter(i=>i.src==='m').map(i=>i.order);return m.length?Math.min(...m):Infinity;};   // trades keep their master-list order
-  const groups=new Map([...g0].map((e,k)=>[e,k]).sort((a,b)=>(rank(a[0][1])-rank(b[0][1]))||(a[1]-b[1])).map(x=>x[0]));
+  const tab=tradeTab(),cmp=(x,y)=>x===y?0:(x<y?-1:1);   // lowest code first; same code keeps the Trades tab order; no code goes last in master-list order
+  const tk=t=>{const x=tab.get(tkey(t));return x&&x.code?[codeNum(x.code),x.k]:[Infinity,Infinity];};
+  const groups=new Map([...g0].map((e,k)=>[e,k]).sort((a,b)=>{const A=tk(a[0][0]),B=tk(b[0][0]);return cmp(A[0],B[0])||cmp(A[1],B[1])||cmp(rank(a[0][1]),rank(b[0][1]))||(a[1]-b[1]);}).map(x=>x[0]));
   const G=$('groups');G.textContent='';let shown=0;
   groups.forEach((list,t)=>{const vis=list.filter(i=>S.filter==='all'||(S.filter==='open'&&!isDone(S.data.checks[i.id]))||(S.filter==='critical'&&i.critical));if(!vis.length)return;shown+=vis.length;
     const d=list.filter(i=>isDone(S.data.checks[i.id])).length;
@@ -287,7 +294,7 @@ function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checkl
     const folded=S.fold[t]&&S.qadd!==t;
     const box=el('div',{class:'items'});vis.forEach(i=>box.append(itemRow(i)));
     const tgl=el('button',{class:'tgl',type:'button','aria-expanded':String(!folded),onclick:e=>{const y=e.currentTarget.getBoundingClientRect().top;S.fold[t]=!folded;if(S.fold[t]&&S.qadd===t)S.qadd=null;renderList();keepHeading(t,y);}},
-      el('span',{class:'arw','aria-hidden':'true',text:'▼'}),el('span',{class:'tname',text:t}),el('span',{class:'cnt',text:d+'/'+list.length}));
+      el('span',{class:'arw','aria-hidden':'true',text:'▼'}),el('span',{class:'tname',text:tradeLabel(t,tab)}),el('span',{class:'cnt',text:d+'/'+list.length}));
     const plus=el('button',{class:'tadd',type:'button','aria-label':'Add tasks to '+t+' (this job only)',text:'+',onclick:()=>openQuickAdd(t)});
     G.append(el('section',{class:'tsec'+(folded?' folded':''),'data-trade':t},el('div',{class:'trade'},tgl,plus),S.qadd===t?quickAdd(t):null,box));});
   if(!items.length)G.append(el('div',{class:'note',text:'No items in this checklist yet. Use "+ Add items" to add some.'}));
@@ -355,10 +362,13 @@ function openEditor(row,i){if(row.querySelector('.editor'))return;
     call('editItem',S.token,S.job.id,i.id,i.src,{text:ta.value,trade,area:area.value,critical:crit.checked}).then(n=>{toast(n?'Item updated':'No changes');return loadJob();}).catch(x=>{save.disabled=false;toast(x.message);});};
   row.append(ed);ta.focus();}
 /* Trade drop-down with "+ Add a new trade…" */
-function allTrades(){return S.data?[...new Set(S.data.items.map(i=>tradeName(i.trade)))].sort():[];}
+/* every trade on the Trades tab (in code order) plus any trade already used by an item */
+function allTrades(){if(!S.data)return[];const tab=tradeTab(),out=new Map();
+  [...tab.values()].sort((a,b)=>(codeNum(a.code)-codeNum(b.code))||(a.k-b.k)).forEach(x=>out.set(x.name.toLowerCase(),x.name));
+  S.data.items.map(i=>tradeName(i.trade)).sort().forEach(t=>{if(!out.has(t.toLowerCase()))out.set(t.toLowerCase(),t);});return[...out.values()];}
 function tradePicker(current){const sel=el('select',{'aria-label':'Trade'});const other=el('input',{placeholder:'New trade name','aria-label':'New trade name',hidden:'hidden'});
-  sel.append(el('option',{value:'',text:'Choose a trade'}));allTrades().forEach(t=>sel.append(el('option',{value:t,text:t})));sel.append(el('option',{value:'__new',text:'+ Add a new trade…'}));
-  if(current&&allTrades().includes(current))sel.value=current;
+  sel.append(el('option',{value:'',text:'Choose a trade'}));const tab=tradeTab(),list=allTrades();list.forEach(t=>sel.append(el('option',{value:t,text:tradeLabel(t,tab)})));sel.append(el('option',{value:'__new',text:'+ Add a new trade…'}));
+  if(current){const m=list.find(t=>t.toLowerCase()===String(current).toLowerCase());if(m)sel.value=m;}
   sel.addEventListener('change',()=>{other.hidden=sel.value!=='__new';if(!other.hidden)other.focus();});
   const box=el('span',{class:'stack',style:'gap:8px'},sel,other);return{el:box,value:()=>sel.value==='__new'?other.value.trim():sel.value};}
 /* Ticks show straight away and save in the background, one at a time per task (a second tap sends the latest). */

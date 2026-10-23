@@ -39,6 +39,7 @@ Then paste it into GitHub: site-checklists repository → Settings → Secrets a
 | Check Log | JobID, ItemID, Checklist, Status (Done / N/A / Cleared), Name, Timestamp — append-only audit trail; latest row per item wins |
 | Edit Log | Timestamp, Name, JobID, ItemID, Field, Old Value, New Value — created on first admin edit |
 | Notes | JobID, ItemID, Checklist, Note, Name, Timestamp — created on first note; append-only, shown oldest first |
+| Trades | Code, Trade — heading codes and sort order (lowest code first, ties keep tab order, no code = last). Seeded from `TRADES` in Code.gs on first run; after that the tab is the source. Codes stored as text |
 | Setup | Instructions for the owner; rewritten by `writeSetupTab_` when `SETUP_TEXT_VERSION` changes |
 
 Checklists: 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough In · 4 Rough In & Pre-Drywall · 5 Drywall · 6 Finishing.
@@ -51,11 +52,13 @@ Checklists: 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough I
 - "+" scrolls the heading and its add box to the top of the screen (so the phone keyboard doesn't cover it). Tasks added to one job (either button) show at the **top** of their trade, newest batch first, typed order within a batch; trade order still follows the master list.
 - Admins (Admin = Y): add items to the master list; **Edit** on every item (wording, trade, area, critical flag) – edits to master items apply to every job and are logged; **Remove from this job** is inside the edit form (two taps to confirm).
 - Trade headings stay pinned under the app header while scrolling. Auto-refresh every 45 s, paused while an editor, note box or add form is open.
+- Trade headings show the code from the Trades tab (e.g. "1050 Site Supervisor") and trades sort by code within each checklist; the trade drop-downs list every Trades-tab trade plus any trade already used. A heading only appears when the checklist has items for that trade.
+- 2026-10-23 one-time trade moves (`tradesUpgrade_`, script property `TRADES_V1`): Energy Consultant, Surveyor, Cleaning → Site Supervisor; Eavestrough → Metalwork; Siding, Masonry (Brick), Masonry (Stone), Deck Carpentry → Exterior Carpentry; Parging → Concrete; Closet Shelving → Finish Carpentry; master items S001–S004 → Mobilize & Startup Site Protection. Logged in Edit Log as "Setup (trade codes)"; counts + uncoded trades written to the Setup tab.
 - No "Mark N/A" button (old N/A ticks still display and count as done).
 - Speed: the app starts with ONE backend call, `startup(token, jobId)` (who's signed in + job list + the open job), instead of whoAmI → getJobs → getJob. Each phone keeps a saved copy (localStorage keys `sc.c.*`: me, jobs, last 5 jobs' data) so the app paints instantly, then updates from the sheet; the copy is cleared on sign-out. Ticks show instantly and save in the background (one write at a time per task; a failed save undoes the tick and says so). `setCheck` and `addNote` only append a row, so they no longer take the script lock.
 
 ## Tests
-`node tests/backend.test.js` runs 50 checks against a mock of SpreadsheetApp/Utilities/etc. (sign-in, lockout, sheet upgrade, ticks, add/edit/remove, Edit Log, notes, startup). Run it before every push that touches `src/Code.gs`, and add checks for new behaviour – the owner can't debug Apps Script. For `src/Index.html`, at least confirm the script parses: replace `<?= … ?>` scriptlets with a placeholder and run it through `new Function`.
+`node tests/backend.test.js` runs 61 checks against a mock of SpreadsheetApp/Utilities/etc. (sign-in, lockout, sheet upgrade, ticks, add/edit/remove, Edit Log, notes, startup, trade codes). Run it before every push that touches `src/Code.gs`, and add checks for new behaviour – the owner can't debug Apps Script. For `src/Index.html`, at least confirm the script parses: replace `<?= … ?>` scriptlets with a placeholder and run it through `new Function`.
 
 ## Open items / ideas not yet requested
 - Admin features the owner may want later: retire a master item from the app, archive finished jobs, manage users/PINs from the app.

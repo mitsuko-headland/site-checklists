@@ -9,9 +9,9 @@ function mkSheet(head,rows){const data=[head,...rows];const sh={data,
 const sheets={
  'Setup':mkSheet(['old'],[['x']]),
  'Users':mkSheet(['Name','Email','Active','Admin'],[['Mark Ellis','m@h.com','Y','Y'],['Joe Site','','Y','N']]),
- 'Items':mkSheet(['ItemID','Walk','Trade','Area','Hold','Item','Division','Order','Active'],[['t001',2,'Framing','backframing','HOLD','Backing installed','Div 06-1',1,'Y'],['t002',3,'Drywall','','','Screws mudded','Div 09',2,'Y'],['t003',4,'Paint','','','Paint done','Div 09',3,'Y']]),
+ 'Items':mkSheet(['ItemID','Walk','Trade','Area','Hold','Item','Division','Order','Active'],[['t001',2,'Framing','backframing','HOLD','Backing installed','Div 06-1',1,'Y'],['t002',3,'Drywall','','','Screws mudded','Div 09',2,'Y'],['t003',4,'Paint','','','Paint done','Div 09',3,'Y'],['t004',3,'Energy Consultant','','','Blower door test booked','Div 01',4,'Y']]),
  'Jobs':mkSheet(['JobID','Job Name','Address','Created By','Created At','Active'],[['J1','Old Job','1 St','Mark',new Date(),'Y']]),
- 'Job Items':mkSheet(['JobID','ItemID','Type','Walk','Trade','Area','Hold','Item','Added By','Added At','Removed'],[['J1','X1','Item',1,'Plumbing','','HOLD','Job extra','Mark',new Date(),'']]),
+ 'Job Items':mkSheet(['JobID','ItemID','Type','Walk','Trade','Area','Hold','Item','Added By','Added At','Removed'],[['J1','X1','Item',1,'Plumbing','','HOLD','Job extra','Mark',new Date(),''],['J1','X2','Item',2,'Siding','','','Siding nailed','Mark',new Date(),'']]),
  'Check Log':mkSheet(['JobID','ItemID','Walk','Status','Name','Timestamp'],[['J1','t001',2,'Done','Mark',new Date()]])};
 const props={},cache={};
 const ctx={SpreadsheetApp:{getActive:()=>({getSheetByName:n=>sheets[n]||null,insertSheet:n=>{sheets[n]=mkSheet([],[]);sheets[n].data.length=0;sheets[n].setFrozenRows=()=>{};return sheets[n];}})},
@@ -40,7 +40,7 @@ let r=A.login('mark ellis','123');ok(r.admin,'numeric PIN with leading zero');
 for(let i=0;i<5;i++)try{A.login('Joe Site','9')}catch(e){}
 try{A.login('Joe Site','5555');ok(false,'lock')}catch(e){ok(/Too many/.test(e.message),'lockout')}
 const t=r.token;let d=A.getJob(t,'J1');
-console.log('   items',d.items.map(i=>i.id+':'+i.list).join(' '),'check',JSON.stringify(d.checks));ok(d.items.length===8&&d.checks['t001'].status==='Done','old job keeps its tick after upgrade');
+console.log('   items',d.items.map(i=>i.id+':'+i.list).join(' '),'check',JSON.stringify(d.checks));ok(d.items.length===10&&d.checks['t001'].status==='Done','old job keeps its tick after upgrade');
 ok(d.items.find(i=>i.id==='t001').critical&&d.items.find(i=>i.id==='X1').critical,'critical flags read');
 const j=A.createJob(t,'Chen','12 Main');ok(A.getJob(t,j.id).items.filter(i=>i.list===1).length===4,'new job gets startup checklist');
 ok(A.setCheck(t,j.id,'S001',1,'Done').name==='Mark Ellis','tick on checklist 1');
@@ -57,7 +57,7 @@ const t2=A.login('Mark Ellis','0123').token;
 let n=A.editItem(t2,'J1','t003','m',{text:'Paint touch-ups complete',trade:'Painting',area:'ceilings',critical:true});
 ok(n===4,'admin edit changes 4 fields');
 const it=sheets['Items'].data.find(r=>r[0]==='t003');ok(it[5]==='Paint touch-ups complete'&&it[2]==='Painting'&&it[3]==='ceilings'&&it[4]==='CRITICAL','master item updated in sheet');
-const L=sheets['Edit Log'].data;ok(L[0][0]==='Timestamp'&&L.length===5&&L.some(r=>r[4]==='Wording'&&r[5]==='Paint done'&&r[6]==='Paint touch-ups complete'&&r[1]==='Mark Ellis'),'Edit Log records old -> new with name');
+const L=sheets['Edit Log'].data;ok(L[0][0]==='Timestamp'&&L.filter(r=>r[1]!=='Setup (trade codes)').length===5&&L.some(r=>r[4]==='Wording'&&r[5]==='Paint done'&&r[6]==='Paint touch-ups complete'&&r[1]==='Mark Ellis'),'Edit Log records old -> new with name');
 ok(A.editItem(t2,'J1','t003','m',{text:'Paint touch-ups complete',trade:'Painting',area:'ceilings',critical:true})===0,'no-op edit logs nothing');
 ok(A.editItem(t2,'J1','X1','j',{text:'Job extra (edited)',trade:'Plumbing',area:'',critical:false})===2,'job-only item edit');
 ok(sheets['Job Items'].data.find(r=>r[1]==='X1')[7]==='Job extra (edited)','job item updated');
@@ -100,4 +100,22 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  ok(sheets['Check Log'].data.length===before+3,'each tick adds one Check Log row');
  ok(A.getJob(t,'J1').checks['t002'].status==='Done','latest tick wins');
  ok(sheets['Check Log'].data.slice(-1)[0][4]==='Mark Ellis','tick logged with the signed-in name');}
+// trade codes: Trades tab, one-time moves, codes sent to the app
+{const T=sheets['Trades'];
+ ok(T&&T.data[0].join()==='Code,Trade'&&T.data.length===31,'Trades tab created with 30 trades');
+ ok(T.data.some(r=>r[0]==='1050'&&r[1]==='Site Supervisor')&&T.data.some(r=>r[0]==='8202'&&r[1]==='Doors'),'Trades tab has the agreed codes');
+ const I=sheets['Items'].data,JI=sheets['Job Items'].data;
+ ok(I.find(r=>r[0]==='t004')[2]==='Site Supervisor','Energy Consultant item moved to Site Supervisor');
+ ok(JI.find(r=>r[1]==='X2')[4]==='Exterior Carpentry','job-only Siding item moved to Exterior Carpentry');
+ ok(['S001','S002','S003','S004'].every(id=>I.find(r=>r[0]===id)[2]==='Mobilize & Startup Site Protection'),'4 startup items moved to Mobilize & Startup Site Protection');
+ const EL=sheets['Edit Log'].data.filter(r=>r[1]==='Setup (trade codes)');
+ ok(EL.length===6&&EL.some(r=>r[3]==='t004'&&r[5]==='Energy Consultant'&&r[6]==='Site Supervisor')&&EL.some(r=>r[2]==='J1'&&r[3]==='X2'),'every move is in the Edit Log (master and job-only)');
+ const rep=JSON.parse(props['TRADES_V1_REPORT']);
+ ok(rep.moved['Energy Consultant → Site Supervisor']===1&&rep.moved['Site Supervisor → Mobilize & Startup Site Protection']===4,'report counts moves');
+ ok(rep.uncoded.includes('Paint')&&!rep.uncoded.includes('Framing'),'report lists trades with no code');
+ ok(sheets['Setup'].data.some(r=>String(r[0]).includes('TRADE CODES UPDATE')),'Setup tab shows the trade codes report');
+ delete cache['schema'];A.setup();
+ ok(sheets['Edit Log'].data.filter(r=>r[1]==='Setup (trade codes)').length===6&&sheets['Trades'].data.length===31,'trade moves run only once');
+ const t=A.login('Mark Ellis',sheets['Users'].data[1][4]).token;const d=A.getJob(t,'J1');
+ ok(d.trades.find(x=>x.name==='Framing').code==='6101'&&d.trades.length===30,'job data includes the trade codes');}
 
