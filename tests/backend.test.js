@@ -5,7 +5,7 @@ function mkSheet(head,rows){const data=[head,...rows];const sh={data,
  getDataRange(){return{getValues:()=>data.map(r=>r.slice())}},getLastColumn(){return Math.max(...data.map(r=>r.length))},getLastRow(){return data.length},getMaxRows(){return 1000},
  getRange(r,c,nr,nc){nr=nr||1;nc=nc||1;return{getValues:()=>{const o=[];for(let i=0;i<nr;i++){const row=data[r-1+i]||[];o.push(Array.from({length:nc},(_,j)=>row[c-1+j]??''));}return o;},
    setValues(v){v.forEach((row,i)=>{data[r-1+i]=data[r-1+i]||[];row.forEach((x,j)=>data[r-1+i][c-1+j]=x);});return this},setValue:v=>{data[r-1]=data[r-1]||[];data[r-1][c-1]=v},setNumberFormat(){},setWrap(){return this},setFontSize(){return this},setFontWeight(){return this}}},
- appendRow(r){data.push(r)},clear(){data.length=0}};return sh;}
+ appendRow(r){data.push(r)},clear(){data.length=0},deleteRows(s,n){data.splice(s-1,n)},deleteRow(s){data.splice(s-1,1)}};return sh;}
 const sheets={
  'Setup':mkSheet(['old'],[['x']]),
  'Users':mkSheet(['Name','Email','Active','Admin'],[['Mark Ellis','m@h.com','Y','Y'],['Joe Site','','Y','N']]),
@@ -21,7 +21,7 @@ const ctx={SpreadsheetApp:{getActive:()=>({getSheetByName:n=>sheets[n]||null,ins
  Utilities:{getUuid:()=>crypto.randomUUID(),computeHmacSha256Signature:(p,s)=>[...crypto.createHmac('sha256',s).update(p).digest()],
   base64EncodeWebSafe:x=>Buffer.from(typeof x==='string'?x:Buffer.from(x.map(b=>b&255))).toString('base64').replace(/\+/g,'-').replace(/\//g,'_'),
   base64DecodeWebSafe:s=>[...Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64')],newBlob:b=>({getDataAsString:()=>Buffer.from(b.map(x=>x&255)).toString()}),formatDate:d=>d.toISOString().slice(5,16)}};
-const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup,cleanupReport_};')(...Object.values(ctx));
+const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup,cleanupReport_,cleanupRun_};')(...Object.values(ctx));
 const ok=(c,m)=>{if(!c){console.log('FAIL',m);process.exitCode=1}else console.log('ok',m)};
 // login before PINs exist -> rejected, but upgrade runs
 try{A.login('Mark Ellis','1');ok(false,'no pin')}catch(e){console.log('   msg:',e.message);ok(/not recognised/.test(e.message),'no PIN yet -> rejected')}
@@ -162,5 +162,25 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  ok(txt.includes('5. YOUR EDITS ON THIS JOB (will be undone) – 1')&&txt.includes('"Site signage" → "Site signage (Park)"'),'lists her job edit with old and new');
  ok(txt.includes('6. YOUR MASTER-LIST EDITS')&&txt.includes('"Old wording" → "Screws mudded"'),'lists her older master-list edits');
  ok(/7\. MASTER-LIST TASKS ADDED THROUGH THE APP[^\n]*– 1/.test(txt)&&txt.includes('Hazmat report on site'),'lists master tasks added through the app');
- ok(JSON.stringify(Object.keys(sheets).filter(k=>k!=='Park Cleanup').map(k=>[k,sheets[k].data.length]))===JSON.stringify(JSON.parse(before).filter(x=>x[0]!=='Park Cleanup')),'summary changes nothing else');}
+ ok(JSON.stringify(Object.keys(sheets).filter(k=>k!=='Park Cleanup').map(k=>[k,sheets[k].data.length]))===JSON.stringify(JSON.parse(before).filter(x=>x[0]!=='Park Cleanup')),'summary changes nothing else');
+ // a job-only task by Sam that Mitsuko edited and then removed (before the clearing)
+ const st=A.getJob(ts,P.id).items.find(i=>i.text==='Sam real task');
+ A.editItem(tm,P.id,st.id,'j',{text:'Sam real task (Mitsuko test edit)',trade:'Framing',area:'',critical:false});A.removeItem(tm,P.id,st.id,'j',3);
+ const other=A.createJob(tm,'Other site','');A.setCheck(tm,other.id,'t002',5,'Done');A.addNote(tm,other.id,'t002',5,'keep me');
+ const res=A.cleanupRun_(ctx.SpreadsheetApp.getActive(),'Park','Mitsuko','Park Cleanup');
+ const dp=A.getJob(ts,P.id);
+ ok(!sheets['Check Log'].data.some(r=>r[0]===P.id&&r[4]==='Mitsuko')&&sheets['Check Log'].data.some(r=>r[0]===P.id&&r[4]==='Sam'),'her Park ticks deleted, Sam\'s kept');
+ ok(dp.checks['t001']&&dp.checks['t001'].status==='Done'&&dp.checks['t001'].name==='Sam'&&!dp.checks['t002'],'tasks go back to Sam\'s tick, or not done');
+ ok(!sheets['Notes'].data.some(r=>r[0]===P.id&&r[4]==='Mitsuko')&&sheets['Notes'].data.some(r=>r[3]==='real note from Sam'),'her notes deleted, Sam\'s kept');
+ ok(dp.items.some(i=>i.text==='Mitsuko test task'),'her task that Sam ticked is kept');
+ ok(dp.items.some(i=>i.id==='t003'),'task she removed is back');
+ ok(dp.items.find(i=>i.id==='S001').text==='Site signage'&&!dp.items.find(i=>i.id==='S001').edited,'her edit to a master task on Park is undone');
+ ok(dp.items.some(i=>i.text==='Sam real task'),'Sam\'s task she edited and removed is back with its original wording');
+ ok(!sheets['Edit Log'].data.some(r=>r[2]===P.id&&r[1]==='Mitsuko')&&sheets['Edit Log'].data.some(r=>r[2]==='(all jobs)'&&r[1]==='Mitsuko'),'her Park Edit Log rows deleted; master-list edit rows untouched');
+ ok(sheets['Check Log'].data.some(r=>r[0]===other.id&&r[4]==='Mitsuko')&&sheets['Notes'].data.some(r=>r[3]==='keep me'),'her work on other jobs untouched');
+ ok(sheets['Items'].data.some(r=>r[5]==='Hazmat report on site'),'master list untouched');
+ const B=sheets['Park Cleanup – Removed rows'].data;ok(B.length>1&&B.some(r=>r[0]==='Check Log')&&B.some(r=>r[0]==='Notes'&&r.includes('test note')),'deleted rows copied to the backup tab');
+ const R2=sheets['Park Cleanup'].data.map(r=>r.join(' | ')).join('\n');
+ ok(R2.startsWith('PARK CLEAN-UP – DONE')&&R2.includes('Kept your task "Mitsuko test task" – Sam ticked or noted it.'),'summary tab rewritten with the result and what was kept');
+ ok(res.ticks===2&&res.notes===1&&res.unhidden===1&&res.unedited===1&&res.restored===1&&res.reverted===1,'counts: 2 ticks, 1 note, 1 back, 1 master edit undone, 1 task restored, 1 edit reversed');}
 

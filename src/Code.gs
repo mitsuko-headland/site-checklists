@@ -87,7 +87,7 @@ function withLock_(fn) {
 function setup() { CacheService.getScriptCache().remove('schema'); upgrade_(); return 'Sheet is up to date.'; }
 function upgrade_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('schema') === '5') return;
+  if (cache.get('schema') === '6') return;
   withLock_(() => {
     const ss = SpreadsheetApp.getActive();
     // Users
@@ -137,11 +137,15 @@ function upgrade_() {
       props.setProperty('STARTUP_ITEMS', 'added');
     }
     tradesUpgrade_(ss, props);
+    // runs once; marked first so a failure never runs it twice (the error is kept for Claude to read back)
+    if (!props.getProperty('PARK_CLEAN_V1')) { props.setProperty('PARK_CLEAN_V1', 'started');
+      try { cleanupRun_(ss, 'Park', 'Mitsuko', 'Park Cleanup'); props.setProperty('PARK_CLEAN_V1', 'done'); } catch (e) { props.setProperty('PARK_CLEAN_V1', 'error: ' + e.message); }
+      props.setProperty('PARK_REPORT_V1', 'done'); }
     if (!props.getProperty('PARK_REPORT_V1')) { try { cleanupReport_(ss, 'Park', 'Mitsuko', 'Park Cleanup'); } catch (e) { /* report is optional */ } props.setProperty('PARK_REPORT_V1', 'done'); }
     if (itemsUpgraded || props.getProperty('SETUP_TEXT') !== SETUP_TEXT_VERSION) {
       try { writeSetupTab_(ss); props.setProperty('SETUP_TEXT', SETUP_TEXT_VERSION); } catch (e) { /* instructions tab is optional */ }
     }
-    cache.put('schema', '5', 21600);
+    cache.put('schema', '6', 21600);
   });
 }
 /* Trade codes: creates the Trades tab, then (once) moves items off retired trades.
@@ -188,7 +192,7 @@ function tradesUpgrade_(ss, props) {
  * Lists everything one person did on one job, so the owner can review it before anything is cleared.
  * Writes (or rewrites) the tab `tabName`. Changes nothing else.
  */
-function cleanupReport_(ss, jobName, person, tabName) {
+function cleanupReport_(ss, jobName, person, tabName, preface) {
   const lc = s => String(s || '').trim().toLowerCase();
   const me = lc(person);
   // read directly (rows_ would re-enter upgrade_, which is what calls this)
@@ -209,6 +213,7 @@ function cleanupReport_(ss, jobName, person, tabName) {
   const out = [['PARK CLEAN-UP – SUMMARY ONLY (nothing has been changed or deleted)', '', '', '', '', '', ''],
     ['Person: ' + person + '   ·   Job(s): ' + (jobs.length ? jobs.map(j => String(j['Job Name']) + ' (' + j['JobID'] + ')').join(', ') : 'NONE FOUND named "' + jobName + '"') + '   ·   Made: ' + when(new Date()), '', '', '', '', '', ''],
     ['', '', '', '', '', '', '']];
+  if (preface) { out[0][0] = 'PARK CLEAN-UP – DONE. What is left below was kept on purpose, or is master-list only.'; preface.forEach(l => out.push([l, '', '', '', '', '', ''])); out.push(['', '', '', '', '', '', '']); }
   const section = (title, head, rows) => {
     out.push([title + ' – ' + rows.length, '', '', '', '', '', '']);
     if (rows.length) { out.push(head); rows.forEach(r => out.push(r)); } else out.push(['(none)', '', '', '', '', '', '']);
@@ -261,6 +266,90 @@ function cleanupReport_(ss, jobName, person, tabName) {
   sh.getRange(1, 1, out.length, 7).setValues(out.map(r => r.map(c => c === undefined || c === null ? '' : c)));
   try { sh.getRange(1, 1).setFontWeight('bold'); sh.setFrozenRows(2); } catch (e) { }
   return out.length;
+}
+/* ---------------- test clean-up (owner approved 2026-10-23) ----------------
+ * Removes one person's changes on one job, keeping everyone else's work:
+ *  - deletes their Check Log, Notes and Edit Log rows for the job (owner chose to remove them from the audit trail)
+ *  - deletes tasks they added (kept if someone else ticked or noted them), their HIDE rows (tasks come back),
+ *    and their EDIT rows (master wording comes back) unless someone else also edited that task
+ *  - puts back job-only tasks they removed, and undoes their edits to other people's job-only tasks
+ *    (only where the value is still what they set)
+ *  - copies every deleted row to a backup tab first; master-list items are never touched
+ * Then rewrites the summary tab with the result. Reads sheets directly (called from upgrade_).
+ */
+function cleanupRun_(ss, jobName, person, tabName) {
+  const lc = s => String(s || '').trim().toLowerCase();
+  const me = lc(person);
+  const read = name => { const sh = ss.getSheetByName(name); if (!sh || sh.getLastRow() < 2) return { sh: sh, head: sh ? head_(sh) : [], rows: [] };
+    const v = sh.getDataRange().getValues(), hd = v.shift().map(x => String(x).trim());
+    return { sh: sh, head: hd, rows: v.map((r, i) => { const o = { _row: i + 2, _vals: r }; hd.forEach((c, j) => o[c] = r[j]); return o; }).filter(o => hd.some(c => o[c] !== '' && o[c] !== null)) }; };
+  const J = read('Jobs');
+  let jobs = J.rows.filter(j => lc(j['Job Name']) === lc(jobName));
+  if (!jobs.length) jobs = J.rows.filter(j => lc(j['Job Name']).indexOf(lc(jobName)) >= 0);
+  if (!jobs.length) return null;
+  const ids = new Set(jobs.map(j => String(j['JobID'])));
+  const inJob = r => ids.has(String(r['JobID']));
+  const C = read('Check Log'), N = read('Notes'), X = read('Job Items'), E = read('Edit Log');
+  const type = r => String(r['Type']).trim().toUpperCase();
+  const key = r => String(r['JobID']) + '|' + String(r['ItemID']);
+  const othersTouched = {};
+  C.rows.concat(N.rows).forEach(r => { if (inJob(r) && lc(r['Name']) !== me) othersTouched[key(r)] = (othersTouched[key(r)] || []).concat(String(r['Name'])); });
+  const othersEdited = {};
+  E.rows.forEach(r => { if (inJob(r) && lc(r['Name']) !== me) othersEdited[key(r)] = true; });
+  const del = { 'Check Log': [], 'Notes': [], 'Job Items': [], 'Edit Log': [] }, kept = [], counts = { ticks: 0, notes: 0, added: 0, unhidden: 0, unedited: 0, restored: 0, reverted: 0, logs: 0 };
+  C.rows.forEach(r => { if (inJob(r) && lc(r['Name']) === me) { del['Check Log'].push(r); counts.ticks++; } });
+  N.rows.forEach(r => { if (inJob(r) && lc(r['Name']) === me) { del['Notes'].push(r); counts.notes++; } });
+  const myTasks = new Set();
+  X.rows.forEach(r => {
+    if (!inJob(r) || lc(r['Added By']) !== me) return;
+    const t = type(r);
+    if (t === 'ITEM') {
+      myTasks.add(key(r));
+      if (othersTouched[key(r)]) kept.push('Kept your task "' + r['Item'] + '" – ' + [...new Set(othersTouched[key(r)])].join(', ') + ' ticked or noted it.');
+      else { del['Job Items'].push(r); counts.added++; }
+    } else if (t === 'HIDE') { del['Job Items'].push(r); counts.unhidden++; }
+    else if (t === 'EDIT') {
+      if (othersEdited[key(r)]) kept.push('Kept the changed wording "' + r['Item'] + '" – someone else also edited this task on this job.');
+      else { del['Job Items'].push(r); counts.unedited++; }
+    }
+  });
+  // put back job-only tasks (someone else's) that this person removed, and undo their edits to those tasks
+  const xHead = X.head, setCell = (r, field, v) => { const c = xHead.indexOf(field); if (c >= 0) X.sh.getRange(r._row, c + 1).setValue(v); };
+  const mineE = E.rows.filter(r => inJob(r) && lc(r['Name']) === me);
+  mineE.slice().reverse().forEach(r => {            // newest first, so several edits unwind in order
+    const task = X.rows.find(x => key(x) === key(r) && type(x) === 'ITEM');
+    if (!task || myTasks.has(key(task))) return;     // master tasks are handled by EDIT/HIDE rows; own tasks are deleted
+    const field = String(r['Field']);
+    if (field === 'Removed from job') { if (yes_(task['Removed'])) { setCell(task, 'Removed', ''); task['Removed'] = ''; counts.restored++; } return; }
+    const col = field === 'Wording' ? 'Item' : field;
+    const now = col === 'Critical' ? (critical_(task[col]) ? 'CRITICAL' : '') : String(task[col] === undefined ? '' : task[col]).trim();
+    if (now === String(r['New Value'])) { setCell(task, col, r['Old Value']); task[col] = r['Old Value']; counts.reverted++; }
+    else kept.push('Did not undo your ' + field + ' change on "' + task['Item'] + '" – it has been changed again since.');
+  });
+  mineE.forEach(r => { del['Edit Log'].push(r); counts.logs++; });
+  // backup, then delete (bottom up, so row numbers stay right)
+  const backupName = tabName + ' – Removed rows';
+  let bk = ss.getSheetByName(backupName); if (!bk) bk = ss.insertSheet(backupName);
+  const width = Math.max(1, ...Object.keys(del).map(t => (read(t).head || []).length));
+  const bkRows = [['Copied from tab', 'Row values (in that tab\'s column order) – safe to delete this tab once you are happy'].concat(Array(width - 1).fill(''))];
+  Object.keys(del).forEach(t => del[t].forEach(r => bkRows.push([t].concat(r._vals, Array(width - r._vals.length).fill('')))));
+  if (bkRows.length > 1) bk.getRange(bk.getLastRow() + 1, 1, bkRows.length, width + 1).setValues(bkRows.map(r => r.slice(0, width + 1)));
+  Object.keys(del).forEach(t => {
+    const sh = ss.getSheetByName(t); if (!sh) return;
+    const rowsDesc = del[t].map(r => r._row).sort((a, b) => b - a);
+    let i = 0;
+    while (i < rowsDesc.length) {                    // merge neighbouring rows into one delete
+      let end = rowsDesc[i], start = end; i++;
+      while (i < rowsDesc.length && rowsDesc[i] === start - 1) { start--; i++; }
+      sh.deleteRows(start, end - start + 1);
+    }
+  });
+  const pre = ['Cleared ' + Utilities.formatDate(new Date(), TZ, 'MMM d, yyyy h:mm a') + ' for ' + person + ' on ' + jobs.map(j => String(j['Job Name'])).join(', ') + '. Nothing anyone else did was changed.',
+    'Removed: ' + counts.ticks + ' ticks/unticks · ' + counts.notes + ' notes · ' + counts.added + ' tasks you added · ' + counts.logs + ' Edit Log rows',
+    'Undone: ' + counts.unhidden + ' removed tasks are back · ' + counts.unedited + ' changed master tasks back to master wording · ' + counts.restored + ' job-only tasks put back · ' + counts.reverted + ' job-only edits reversed',
+    'Every deleted row was copied to the "' + backupName + '" tab first.'].concat(kept.length ? kept : ['Nothing of yours had to be kept.']);
+  cleanupReport_(ss, jobName, person, tabName, pre);
+  return counts;
 }
 function writeSetupTab_(ss) {
   const s = ss.getSheetByName('Setup');
