@@ -21,7 +21,7 @@ const ctx={SpreadsheetApp:{getActive:()=>({getSheetByName:n=>sheets[n]||null,ins
  Utilities:{getUuid:()=>crypto.randomUUID(),computeHmacSha256Signature:(p,s)=>[...crypto.createHmac('sha256',s).update(p).digest()],
   base64EncodeWebSafe:x=>Buffer.from(typeof x==='string'?x:Buffer.from(x.map(b=>b&255))).toString('base64').replace(/\+/g,'-').replace(/\//g,'_'),
   base64DecodeWebSafe:s=>[...Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64')],newBlob:b=>({getDataAsString:()=>Buffer.from(b.map(x=>x&255)).toString()}),formatDate:d=>d.toISOString().slice(5,16)}};
-const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup};')(...Object.values(ctx));
+const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup,cleanupReport_};')(...Object.values(ctx));
 const ok=(c,m)=>{if(!c){console.log('FAIL',m);process.exitCode=1}else console.log('ok',m)};
 // login before PINs exist -> rejected, but upgrade runs
 try{A.login('Mark Ellis','1');ok(false,'no pin')}catch(e){console.log('   msg:',e.message);ok(/not recognised/.test(e.message),'no PIN yet -> rejected')}
@@ -135,4 +135,32 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  A.removeItem(t,J.id,'t002','m',5);
  ok(!A.getJob(t,J.id).items.some(i=>i.id==='t002')&&A.getJob(t,'J1').items.some(i=>i.id==='t002'),'non-admin removes a master task from one job only');
  ok(sheets['Edit Log'].data.some(r=>r[1]==='Joe Site'&&r[2]===J.id&&r[3]==='t002'&&r[4]==='Removed from job'&&r[5]==='Screws mudded'),'removal is in the Edit Log with who and the task wording');}
+// Park clean-up summary: lists only one person's changes on one job, changes nothing
+{const U=sheets['Users'].data;U.push(['Mitsuko','','Y','Y','1111']);U.push(['Sam','','Y','N','2222']);
+ const tm=A.login('Mitsuko','1111').token,ts=A.login('Sam','2222').token;
+ const P=A.createJob(tm,'Park','12 Park St');A.createJob(tm,'Parkview','');
+ A.setCheck(ts,P.id,'t001',4,'Done');           // Sam ticks
+ A.setCheck(tm,P.id,'t001',4,'Cleared');        // Mitsuko unticks it
+ A.setCheck(tm,P.id,'t002',5,'Done');           // Mitsuko ticks
+ A.addNote(tm,P.id,'t002',5,'test note');A.addNote(ts,P.id,'t002',5,'real note from Sam');
+ A.addItems(tm,P.id,'job',[{list:3,trade:'Framing',text:'Mitsuko test task'}]);
+ A.addItems(ts,P.id,'job',[{list:3,trade:'Framing',text:'Sam real task'}]);
+ const mt=A.getJob(tm,P.id).items.find(i=>i.text==='Mitsuko test task');A.setCheck(ts,P.id,mt.id,3,'Done');   // Sam ticks Mitsuko's task
+ A.removeItem(tm,P.id,'t003','m',6);
+ A.editItem(tm,P.id,'S001','m',{text:'Site signage (Park)',trade:'Mobilize & Startup Site Protection',area:'',critical:false});
+ sheets['Edit Log'].data.push([new Date(),'Mitsuko','(all jobs)','t002','Wording','Old wording','Screws mudded']);   // an older master edit
+ const before=JSON.stringify(Object.keys(sheets).map(k=>[k,sheets[k].data.length]));
+ A.cleanupReport_(ctx.SpreadsheetApp.getActive(),'Park','Mitsuko','Park Cleanup');
+ const R=sheets['Park Cleanup'].data.map(r=>r.join(' | ')),txt=R.join('\n');
+ ok(R[1].includes('Park ('+P.id+')')&&!R[1].includes('Parkview'),'exact job name "Park" chosen over "Parkview"');
+ ok(txt.includes('1. YOUR TICKS AND UNTICKS (will be deleted from Check Log) – 2'),'lists 2 of Mitsuko\'s ticks, none of Sam\'s');
+ ok(R.some(r=>r.includes('Backing installed')&&r.includes('Cleared')&&r.includes('Afterwards: Done by Sam')),'shows what a task goes back to (Sam\'s tick)');
+ ok(R.some(r=>r.includes('Screws mudded')&&r.includes('Afterwards: not done')),'shows a task going back to not done');
+ ok(txt.includes('2. YOUR NOTES (will be deleted) – 1')&&txt.includes('test note')&&!txt.includes('real note from Sam'),'lists only her notes');
+ ok(txt.includes('3. TASKS YOU ADDED TO THIS JOB (will be removed) – 1')&&R.some(r=>r.includes('Mitsuko test task')&&r.includes('CHECK: Sam ticked this task'))&&!txt.includes('Sam real task'),'lists her added task and flags Sam\'s tick on it');
+ ok(txt.includes('4. TASKS YOU REMOVED FROM THIS JOB (will come back) – 1'),'lists her removal');
+ ok(txt.includes('5. YOUR EDITS ON THIS JOB (will be undone) – 1')&&txt.includes('"Site signage" → "Site signage (Park)"'),'lists her job edit with old and new');
+ ok(txt.includes('6. YOUR MASTER-LIST EDITS')&&txt.includes('"Old wording" → "Screws mudded"'),'lists her older master-list edits');
+ ok(/7\. MASTER-LIST TASKS ADDED THROUGH THE APP[^\n]*– 1/.test(txt)&&txt.includes('Hazmat report on site'),'lists master tasks added through the app');
+ ok(JSON.stringify(Object.keys(sheets).filter(k=>k!=='Park Cleanup').map(k=>[k,sheets[k].data.length]))===JSON.stringify(JSON.parse(before).filter(x=>x[0]!=='Park Cleanup')),'summary changes nothing else');}
 

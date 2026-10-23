@@ -87,7 +87,7 @@ function withLock_(fn) {
 function setup() { CacheService.getScriptCache().remove('schema'); upgrade_(); return 'Sheet is up to date.'; }
 function upgrade_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('schema') === '4') return;
+  if (cache.get('schema') === '5') return;
   withLock_(() => {
     const ss = SpreadsheetApp.getActive();
     // Users
@@ -137,10 +137,11 @@ function upgrade_() {
       props.setProperty('STARTUP_ITEMS', 'added');
     }
     tradesUpgrade_(ss, props);
+    if (!props.getProperty('PARK_REPORT_V1')) { try { cleanupReport_(ss, 'Park', 'Mitsuko', 'Park Cleanup'); } catch (e) { /* report is optional */ } props.setProperty('PARK_REPORT_V1', 'done'); }
     if (itemsUpgraded || props.getProperty('SETUP_TEXT') !== SETUP_TEXT_VERSION) {
       try { writeSetupTab_(ss); props.setProperty('SETUP_TEXT', SETUP_TEXT_VERSION); } catch (e) { /* instructions tab is optional */ }
     }
-    cache.put('schema', '4', 21600);
+    cache.put('schema', '5', 21600);
   });
 }
 /* Trade codes: creates the Trades tab, then (once) moves items off retired trades.
@@ -182,6 +183,84 @@ function tradesUpgrade_(ss, props) {
   const uncoded = Object.keys(seen).filter(k => !coded[k]).map(k => seen[k]).sort();
   props.setProperty('TRADES_V1_REPORT', JSON.stringify({ at: fmt_(now), moved: moved, uncoded: uncoded }));
   props.setProperty('TRADES_V1', 'done');
+}
+/* ---------------- test clean-up report (read-only) ----------------
+ * Lists everything one person did on one job, so the owner can review it before anything is cleared.
+ * Writes (or rewrites) the tab `tabName`. Changes nothing else.
+ */
+function cleanupReport_(ss, jobName, person, tabName) {
+  const lc = s => String(s || '').trim().toLowerCase();
+  const me = lc(person);
+  // read directly (rows_ would re-enter upgrade_, which is what calls this)
+  const get = name => { const sh = ss.getSheetByName(name); if (!sh || sh.getLastRow() < 2) return [];
+    const v = sh.getDataRange().getValues(), hd = v.shift().map(x => String(x).trim());
+    return v.map((r, i) => { const o = { _row: i + 2 }; hd.forEach((c, j) => o[c] = r[j]); return o; }).filter(o => hd.some(c => o[c] !== '' && o[c] !== null)); };
+  const jobsAll = get('Jobs');
+  let jobs = jobsAll.filter(j => lc(j['Job Name']) === lc(jobName));
+  if (!jobs.length) jobs = jobsAll.filter(j => lc(j['Job Name']).indexOf(lc(jobName)) >= 0);
+  const ids = new Set(jobs.map(j => String(j['JobID'])));
+  const jobLabel = id => { const j = jobsAll.find(x => String(x['JobID']) === id); return j ? String(j['Job Name']) : id; };
+  const master = {}; get('Items').forEach(r => { master[String(r['ItemID'])] = r; });
+  const jobItems = get('Job Items');
+  const extra = {}; jobItems.forEach(r => { if (String(r['Type']).trim().toUpperCase() === 'ITEM') extra[String(r['JobID']) + '|' + String(r['ItemID'])] = r; });
+  const task = (jobId, itemId) => { const r = extra[jobId + '|' + itemId] || master[itemId]; return r ? [Number(r['Checklist']) || '', String(r['Trade'] || ''), String(r['Item'] || '')] : ['', '', '(task no longer exists: ' + itemId + ')']; };
+  const when = d => d instanceof Date ? Utilities.formatDate(d, TZ, 'MMM d, yyyy h:mm a') : String(d || '');
+  const checks = get('Check Log'), notes = get('Notes'), edits = get('Edit Log');
+  const out = [['PARK CLEAN-UP – SUMMARY ONLY (nothing has been changed or deleted)', '', '', '', '', '', ''],
+    ['Person: ' + person + '   ·   Job(s): ' + (jobs.length ? jobs.map(j => String(j['Job Name']) + ' (' + j['JobID'] + ')').join(', ') : 'NONE FOUND named "' + jobName + '"') + '   ·   Made: ' + when(new Date()), '', '', '', '', '', ''],
+    ['', '', '', '', '', '', '']];
+  const section = (title, head, rows) => {
+    out.push([title + ' – ' + rows.length, '', '', '', '', '', '']);
+    if (rows.length) { out.push(head); rows.forEach(r => out.push(r)); } else out.push(['(none)', '', '', '', '', '', '']);
+    out.push(['', '', '', '', '', '', '']);
+  };
+  const H = ['Job', 'Checklist', 'Trade', 'Task', 'What', 'When', 'Note'];
+  // 1. ticks and unticks
+  const mine = checks.filter(r => ids.has(String(r['JobID'])) && lc(r['Name']) === me);
+  section('1. YOUR TICKS AND UNTICKS (will be deleted from Check Log)', H, mine.map(r => {
+    const j = String(r['JobID']), it = String(r['ItemID']);
+    const others = checks.filter(x => String(x['JobID']) === j && String(x['ItemID']) === it && lc(x['Name']) !== me);
+    const last = others[others.length - 1];
+    const after = !last || String(last['Status']) === 'Cleared' ? 'Afterwards: not done' : 'Afterwards: ' + last['Status'] + ' by ' + last['Name'] + ' (' + when(last['Timestamp']) + ')';
+    return [jobLabel(j)].concat(task(j, it), [String(r['Status']), when(r['Timestamp']), after]);
+  }));
+  // 2. notes
+  section('2. YOUR NOTES (will be deleted)', H, notes.filter(r => ids.has(String(r['JobID'])) && lc(r['Name']) === me)
+    .map(r => [jobLabel(String(r['JobID']))].concat(task(String(r['JobID']), String(r['ItemID'])), ['Note: ' + String(r['Note']), when(r['Timestamp']), ''])));
+  // 3. tasks added
+  section('3. TASKS YOU ADDED TO THIS JOB (will be removed)', H, jobItems.filter(r => ids.has(String(r['JobID'])) && String(r['Type']).trim().toUpperCase() === 'ITEM' && lc(r['Added By']) === me)
+    .map(r => {
+      const j = String(r['JobID']), it = String(r['ItemID']);
+      const by = {};
+      checks.filter(x => String(x['JobID']) === j && String(x['ItemID']) === it && lc(x['Name']) !== me).forEach(x => by[String(x['Name'])] = (by[String(x['Name'])] || '') + 'ticked ');
+      notes.filter(x => String(x['JobID']) === j && String(x['ItemID']) === it && lc(x['Name']) !== me).forEach(x => by[String(x['Name'])] = (by[String(x['Name'])] || '') + 'noted ');
+      const flag = Object.keys(by).map(n => n + ' ' + by[n].trim().replace(' ', ' + ')).join('; ');
+      return [jobLabel(j), Number(r['Checklist']) || '', String(r['Trade'] || ''), String(r['Item'] || ''), yes_(r['Removed']) ? 'Added (already removed)' : 'Added', when(r['Added At']), flag ? 'CHECK: ' + flag + ' this task' : ''];
+    }));
+  // 4. tasks removed
+  const hides = jobItems.filter(r => ids.has(String(r['JobID'])) && String(r['Type']).trim().toUpperCase() === 'HIDE' && lc(r['Added By']) === me)
+    .map(r => [jobLabel(String(r['JobID']))].concat(task(String(r['JobID']), String(r['ItemID'])), ['Removed from this job', when(r['Added At']), 'Will come back']));
+  const remLog = edits.filter(r => ids.has(String(r['JobID'])) && lc(r['Name']) === me && String(r['Field']) === 'Removed from job' && !master[String(r['ItemID'])])
+    .map(r => [jobLabel(String(r['JobID']))].concat(task(String(r['JobID']), String(r['ItemID'])), ['Removed from this job', when(r['Timestamp']), 'Will come back']));
+  section('4. TASKS YOU REMOVED FROM THIS JOB (will come back)', H, hides.concat(remLog));
+  // 5. edits on this job
+  section('5. YOUR EDITS ON THIS JOB (will be undone)', H, edits.filter(r => ids.has(String(r['JobID'])) && lc(r['Name']) === me && String(r['Field']) !== 'Removed from job')
+    .map(r => [jobLabel(String(r['JobID']))].concat(task(String(r['JobID']), String(r['ItemID'])), [String(r['Field']) + ': "' + r['Old Value'] + '" → "' + r['New Value'] + '"', when(r['Timestamp']), ''])));
+  // 6. master-list edits (changed every job)
+  section('6. YOUR MASTER-LIST EDITS – these changed EVERY job (listed only, not undone unless you ask)', ['Job', 'Checklist', 'Trade', 'Task (as it reads now)', 'What', 'When', 'Note'],
+    edits.filter(r => String(r['JobID']) === '(all jobs)' && lc(r['Name']) === me)
+      .map(r => { const m = master[String(r['ItemID'])]; return ['(all jobs)', m ? Number(m['Checklist']) || '' : '', m ? String(m['Trade'] || '') : '', m ? String(m['Item'] || '') : '(task no longer exists)', String(r['Field']) + ': "' + r['Old Value'] + '" → "' + r['New Value'] + '"', when(r['Timestamp']), 'ItemID ' + r['ItemID']]; }));
+  // 7. master-list tasks added through the app (who added isn't recorded)
+  section('7. MASTER-LIST TASKS ADDED THROUGH THE APP – who added them is not recorded; tell Claude which are yours', ['Job', 'Checklist', 'Trade', 'Task', 'What', 'When', 'Note'],
+    Object.keys(master).filter(id => /^M[0-9A-Z]{9,10}$/.test(id)).map(id => {
+      const m = master[id], t = parseInt(id.slice(1, 9), 36);
+      return ['(all jobs)', Number(m['Checklist']) || '', String(m['Trade'] || ''), String(m['Item'] || ''), 'Added to master list', isNaN(t) ? '' : when(new Date(t)), 'ItemID ' + id];
+    }).sort((a, b) => String(a[5]).localeCompare(String(b[5]))));
+  let sh = ss.getSheetByName(tabName);
+  if (!sh) sh = ss.insertSheet(tabName); else sh.clear();
+  sh.getRange(1, 1, out.length, 7).setValues(out.map(r => r.map(c => c === undefined || c === null ? '' : c)));
+  try { sh.getRange(1, 1).setFontWeight('bold'); sh.setFrozenRows(2); } catch (e) { }
+  return out.length;
 }
 function writeSetupTab_(ss) {
   const s = ss.getSheetByName('Setup');
