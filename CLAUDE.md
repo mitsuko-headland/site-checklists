@@ -52,9 +52,10 @@ Checklists: 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough I
 - Admins (Admin = Y): add items to the master list; **Edit** on every item (wording, trade, area, critical flag) – edits to master items apply to every job and are logged; **Remove from this job** is inside the edit form (two taps to confirm).
 - Trade headings stay pinned under the app header while scrolling. Auto-refresh every 45 s, paused while an editor, note box or add form is open.
 - No "Mark N/A" button (old N/A ticks still display and count as done).
+- Speed: the app starts with ONE backend call, `startup(token, jobId)` (who's signed in + job list + the open job), instead of whoAmI → getJobs → getJob. Each phone keeps a saved copy (localStorage keys `sc.c.*`: me, jobs, last 5 jobs' data) so the app paints instantly, then updates from the sheet; the copy is cleared on sign-out. Ticks show instantly and save in the background (one write at a time per task; a failed save undoes the tick and says so). `setCheck` and `addNote` only append a row, so they no longer take the script lock.
 
 ## Tests
-`node tests/backend.test.js` runs 42 checks against a mock of SpreadsheetApp/Utilities/etc. (sign-in, lockout, sheet upgrade, ticks, add/edit/remove, Edit Log, notes). Run it before every push that touches `src/Code.gs`, and add checks for new behaviour – the owner can't debug Apps Script. For `src/Index.html`, at least confirm the script parses: replace `<?= … ?>` scriptlets with a placeholder and run it through `new Function`.
+`node tests/backend.test.js` runs 50 checks against a mock of SpreadsheetApp/Utilities/etc. (sign-in, lockout, sheet upgrade, ticks, add/edit/remove, Edit Log, notes, startup). Run it before every push that touches `src/Code.gs`, and add checks for new behaviour – the owner can't debug Apps Script. For `src/Index.html`, at least confirm the script parses: replace `<?= … ?>` scriptlets with a placeholder and run it through `new Function`.
 
 ## Open items / ideas not yet requested
 - Admin features the owner may want later: retire a master item from the app, archive finished jobs, manage users/PINs from the app.

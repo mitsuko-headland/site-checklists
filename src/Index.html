@@ -201,7 +201,13 @@ const LISTS=[
 const $=id=>document.getElementById(id);
 const el=(tag,props,...kids)=>{const e=document.createElement(tag);if(props)for(const k in props){if(k==='class')e.className=props[k];else if(k==='text')e.textContent=props[k];else if(k.startsWith('on'))e.addEventListener(k.slice(2),props[k]);else e.setAttribute(k,props[k]);}for(const c of kids)if(c!=null)e.append(c);return e;};
 const store={get(k){try{return localStorage.getItem(k);}catch(e){return null;}},set(k,v){try{localStorage.setItem(k,v);}catch(e){}},del(k){try{localStorage.removeItem(k);}catch(e){}}};
-const S={token:store.get('sc.token'),me:null,jobs:[],job:null,data:null,list:null,filter:'all',saving:{},fold:Object.create(null),qadd:null,qaddDraft:null,noteFor:null,noteDraft:'',noteBusy:false};
+const S={token:store.get('sc.token'),me:null,jobs:[],job:null,data:null,list:null,filter:'all',saving:{},fold:Object.create(null),qadd:null,qaddDraft:null,noteFor:null,noteDraft:'',noteBusy:false,pend:{},before:{}};
+/* Saved copy on this phone, so the app opens instantly and then updates from the sheet (cleared on sign-out). */
+const saved={get(k){try{return JSON.parse(store.get('sc.c.'+k)||'null');}catch(e){return null;}},set(k,v){try{store.set('sc.c.'+k,JSON.stringify(v));}catch(e){}},
+  clear(){try{Object.keys(localStorage).filter(k=>k.indexOf('sc.c.')===0).forEach(k=>localStorage.removeItem(k));}catch(e){}},
+  job(id,d){const ids=(saved.get('jobids')||[]).filter(x=>x!==id);ids.unshift(id);ids.slice(5).forEach(x=>store.del('sc.c.job.'+x));saved.set('jobids',ids.slice(0,5));saved.set('job.'+id,d);}};
+function saveJob(){clearTimeout(saveJob.t);saveJob.t=setTimeout(()=>{if(S.job&&S.data&&S.data.job&&S.data.job.id===S.job.id)saved.job(S.job.id,S.data);},600);}
+function nowStamp(){try{return new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'America/Vancouver'});}catch(e){return 'just now';}}
 let retryFn=null;let pendingJob=JOB_PARAM;
 function call(fn,...args){return new Promise((res,rej)=>google.script.run.withSuccessHandler(res).withFailureHandler(e=>{const m=(e&&e.message)||String(e);if(/AUTH/.test(m))signOut('Please sign in again.');rej(new Error(m));})[fn](...args));}
 function toast(m){const t=$('toast');t.textContent=m;t.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>t.hidden=true,2800);}
@@ -216,17 +222,30 @@ function retry(){const fn=retryFn;retryFn=null;$('retryBtn').hidden=true;const n
 $('retryBtn').addEventListener('click',retry);
 
 /* ---------- sign in ---------- */
-function start(){if(!S.token){show('vLogin');return;}show('vStart');call('whoAmI',S.token).then(signedIn).catch(x=>{if(!/AUTH/.test(x.message))failed(x.message,start);});}
-function signedIn(me){S.me=me;$('whoName').textContent=me.name;$('who').hidden=false;$('aScope').options[1].disabled=!me.admin;loadJobs();}
-function signOut(msg){S.token=null;S.me=null;store.del('sc.token');$('who').hidden=true;header('Site Checklists','Headland Construction');show('vLogin');if(msg){$('lErr').textContent=msg;$('lErr').hidden=false;}}
+function start(){if(!S.token){show('vLogin');return;}
+  const want=pendingJob||store.get('sc.job')||'',fromLink=!!pendingJob,me=saved.get('me'),jobs=saved.get('jobs');
+  // 1. paint the saved copy straight away
+  if(me&&jobs){applyMe(me);S.jobs=jobs;if(want&&jobs.some(j=>j.id===want))openJob(want,true);else{showJobs();}}else show('vStart');
+  // 2. one request for who's signed in, the job list and the open job
+  call('startup',S.token,want).then(r=>{applyMe(r.me);saved.set('me',r.me);S.jobs=r.jobs;saved.set('jobs',r.jobs);pendingJob='';
+    const exists=want&&r.jobs.some(x=>x.id===want);
+    if(exists){if(!(S.job&&S.job.id===want)&&!$('vStart').hidden)openJob(want,true);
+      if(S.job&&S.job.id===want){if(r.job)gotJob(r.job);else loadJob();}}
+    else if(want&&!exists){if(fromLink)toast('That job link is no longer valid');if(S.job&&S.job.id===want){store.del('sc.job');S.job=null;showJobs();}}
+    if(!$('vStart').hidden)showJobs();else if(!$('vJobs').hidden)renderJobs();})
+  .catch(x=>{if(/AUTH/.test(x.message))return;if(me&&jobs&&$('vStart').hidden)toast('Showing your saved copy – could not reach the sheet');else failed(x.message,start);});}
+function applyMe(me){S.me=me;$('whoName').textContent=me.name;$('who').hidden=false;$('aScope').options[1].disabled=!me.admin;}
+function signedIn(me){applyMe(me);saved.set('me',{name:me.name,admin:me.admin});loadJobs();}
+function showJobs(){show('vJobs');header('Site Checklists','Headland Construction');renderJobs();}
+function signOut(msg){S.token=null;S.me=null;store.del('sc.token');saved.clear();$('who').hidden=true;header('Site Checklists','Headland Construction');show('vLogin');if(msg){$('lErr').textContent=msg;$('lErr').hidden=false;}}
 $('loginForm').addEventListener('submit',e=>{e.preventDefault();$('lErr').hidden=true;$('lBtn').disabled=true;
   call('login',$('lName').value,$('lPin').value).then(r=>{S.token=r.token;store.set('sc.token',r.token);$('lPin').value='';signedIn(r);})
   .catch(x=>{if(!/AUTH/.test(x.message)){$('lErr').textContent=x.message;$('lErr').hidden=false;}}).finally(()=>$('lBtn').disabled=false);});
 $('signOut').addEventListener('click',()=>signOut());
 
 /* ---------- jobs ---------- */
-function loadJobs(){show('vJobs');header('Site Checklists','Headland Construction');
-  call('getJobs',S.token).then(j=>{S.jobs=j;renderJobs();const want=pendingJob||store.get('sc.job');const fromLink=!!pendingJob;pendingJob='';if(want&&j.some(x=>x.id===want))openJob(want);else if(fromLink)toast('That job link is no longer valid');}).catch(x=>{if(!/AUTH/.test(x.message))failed(x.message,loadJobs);});}
+function loadJobs(){showJobs();
+  call('getJobs',S.token).then(j=>{S.jobs=j;saved.set('jobs',j);if(!$('vJobs').hidden)renderJobs();const want=pendingJob||store.get('sc.job');const fromLink=!!pendingJob;pendingJob='';if(want&&j.some(x=>x.id===want))openJob(want);else if(fromLink)toast('That job link is no longer valid');}).catch(x=>{if(!/AUTH/.test(x.message))failed(x.message,loadJobs);});}
 function renderJobs(){const q=($('jobSearch').value||'').toLowerCase();const L=$('jobList');L.textContent='';
   const jobs=S.jobs.filter(j=>!q||(j.name+' '+j.address).toLowerCase().includes(q));
   if(!jobs.length)L.append(el('div',{class:'note',text:S.jobs.length?'No jobs match that search.':'No jobs yet. Create the first one below – it gets all six checklists from the master list.'}));
@@ -235,10 +254,16 @@ $('jobSearch').addEventListener('input',renderJobs);
 $('newJobForm').addEventListener('submit',e=>{e.preventDefault();call('createJob',S.token,$('njName').value,$('njAddr').value).then(j=>{$('newJobForm').reset();$('newJobPanel').open=false;toast('Job created');S.jobs.unshift(j);openJob(j.id);}).catch(x=>toast(x.message));});
 
 /* ---------- one job ---------- */
-function openJob(id){const j=S.jobs.find(x=>x.id===id);store.set('sc.job',id);S.job=j||{id:id,name:'Job',address:''};header(S.job.name,S.job.address||'Choose a checklist');
-  S.data=null;S.list=null;$('jobLink').value=APP_URL+'?job='+id;$('listList').textContent='';$('listList').append(el('div',{class:'note',text:'Loading…'}));show('vLists');loadJob();}
-function loadJob(){return call('getJob',S.token,S.job.id).then(d=>{S.data=d;S.job=d.job;header(d.job.name,d.job.address||'Choose a checklist');renderTrades();if(S.list)renderList();else renderLists();})
-  .catch(x=>{if(/AUTH/.test(x.message))return;if(S.data)toast(x.message);else failed(x.message,()=>openJob(S.job.id));});}
+function openJob(id,noLoad){const j=S.jobs.find(x=>x.id===id);store.set('sc.job',id);S.job=j||{id:id,name:'Job',address:''};header(S.job.name,S.job.address||'Choose a checklist');
+  S.data=saved.get('job.'+id);S.list=null;$('jobLink').value=APP_URL+'?job='+id;show('vLists');
+  if(S.data){renderTrades();renderLists();}else{$('listList').textContent='';$('listList').append(el('div',{class:'note',text:'Loading…'}));}
+  if(!noLoad)loadJob();}
+/* fresh data from the sheet; ticks still being saved stay as the person left them */
+function gotJob(d){if(!S.job||d.job.id!==S.job.id)return;const pre=d.job.id+'|';
+  Object.keys(S.pend).forEach(k=>{if(k.indexOf(pre)===0)d.checks[k.slice(pre.length)]=S.pend[k].val;});
+  S.data=d;S.job=d.job;saveJob();header(d.job.name,d.job.address||'Choose a checklist');renderTrades();if(S.list)renderList();else if(!$('vLists').hidden)renderLists();}
+function loadJob(){const id=S.job.id;return call('getJob',S.token,id).then(gotJob)
+  .catch(x=>{if(/AUTH/.test(x.message))return;if(S.job&&S.job.id!==id)return;if(S.data)toast('Could not refresh – '+x.message);else failed(x.message,()=>openJob(id));});}
 function itemsFor(n){return S.data?S.data.items.filter(i=>i.list===n).sort((a,b)=>a.order-b.order):[];}
 function stat(n){const it=itemsFor(n);let done=0,crit=0;it.forEach(i=>{if(isDone(S.data.checks[i.id]))done++;else if(i.critical)crit++;});return{total:it.length,done,crit};}
 function renderLists(){const L=$('listList');L.textContent='';
@@ -268,7 +293,7 @@ function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checkl
   if(!items.length)G.append(el('div',{class:'note',text:'No items in this checklist yet. Use "+ Add items" to add some.'}));
   else if(!shown)G.append(el('div',{class:'empty',text:S.filter==='critical'?'No critical items in this checklist.':'Everything in this checklist is done.'}));}
 function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
-  const row=el('div',{class:'item'+(i.critical?' isHold':'')+(st==='Done'?' done':'')+(st==='N/A'?' na':'')+(S.saving[i.id]?' saving':'')});
+  const row=el('div',{class:'item'+(i.critical?' isHold':'')+(st==='Done'?' done':'')+(st==='N/A'?' na':'')});
   row.append(el('button',{class:'tick',type:'button','aria-label':st?'Clear':'Mark done','aria-pressed':String(st==='Done'),text:st==='Done'?'✓':(st==='N/A'?'N/A':''),onclick:()=>setCheck(i,st?'Cleared':'Done')}));
   const txt=el('div',{class:'txt'},document.createTextNode(i.text));const tags=el('div',{class:'tags'});
   if(i.critical)tags.append(el('span',{class:'pill hold',text:'CRITICAL'}));if(i.area)tags.append(el('span',{class:'tag',text:i.area}));if(i.src==='j')tags.append(el('span',{class:'tag extra',text:'this job'}));
@@ -285,7 +310,7 @@ function noteBox(i){const ta=el('textarea',{class:'short','aria-label':'Note',ma
   const save=el('button',{class:'btn primary',type:'button',text:'Save note'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});save.disabled=S.noteBusy;
   cancel.onclick=()=>{S.noteFor=null;S.noteDraft='';renderList();};
   save.onclick=()=>{if(!ta.value.trim()){toast('Type a note first');return;}S.noteBusy=true;save.disabled=true;
-    call('addNote',S.token,S.job.id,i.id,i.list,ta.value).then(n=>{S.data.notes=S.data.notes||{};(S.data.notes[i.id]=S.data.notes[i.id]||[]).push(n);S.noteFor=null;S.noteDraft='';toast('Note saved');})
+    call('addNote',S.token,S.job.id,i.id,i.list,ta.value).then(n=>{S.data.notes=S.data.notes||{};(S.data.notes[i.id]=S.data.notes[i.id]||[]).push(n);saveJob();S.noteFor=null;S.noteDraft='';toast('Note saved');})
       .catch(x=>toast(x.message)).finally(()=>{S.noteBusy=false;if(S.list)renderList();});};
   return el('div',{class:'editor note-box'},el('label',{class:'f'},document.createTextNode('Note – saved with your name and the time'),ta),el('div',{class:'row'},save,cancel));}
 function focusIn(sel){const x=document.querySelector(sel);if(x){x.focus({preventScroll:true});x.scrollIntoView({block:'center',behavior:'smooth'});}}
@@ -336,9 +361,22 @@ function tradePicker(current){const sel=el('select',{'aria-label':'Trade'});cons
   if(current&&allTrades().includes(current))sel.value=current;
   sel.addEventListener('change',()=>{other.hidden=sel.value!=='__new';if(!other.hidden)other.focus();});
   const box=el('span',{class:'stack',style:'gap:8px'},sel,other);return{el:box,value:()=>sel.value==='__new'?other.value.trim():sel.value};}
-function setCheck(i,status){if(S.saving[i.id])return;S.saving[i.id]=true;renderList();
-  call('setCheck',S.token,S.job.id,i.id,i.list,status).then(r=>{S.data.checks[i.id]=r;}).catch(x=>{if(!/AUTH/.test(x.message))toast('Not saved – '+x.message);}).finally(()=>{delete S.saving[i.id];if(S.list)renderList();});}
-function removeItem(i){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{S.data.items=S.data.items.filter(x=>x.id!==i.id);renderList();toast('Removed from this job');}).catch(x=>toast(x.message));}
+/* Ticks show straight away and save in the background, one at a time per task (a second tap sends the latest). */
+function setCheck(i,status){const jobId=S.job.id,k=jobId+'|'+i.id;
+  if(!(k in S.before))S.before[k]=S.data.checks[i.id]||null;
+  const val=status==='Cleared'?null:{status:status,name:S.me?S.me.name:'',at:nowStamp()};
+  S.data.checks[i.id]=val;S.pend[k]={status:status,val:val};renderList();
+  if(S.saving[k])return;S.saving[k]=true;
+  const here=()=>S.job&&S.job.id===jobId&&S.data;
+  (function send(){const want=S.pend[k];
+    call('setCheck',S.token,jobId,i.id,i.list,want.status).then(r=>{
+      if(S.pend[k]!==want){send();return;}
+      delete S.pend[k];delete S.before[k];delete S.saving[k];
+      if(here()){S.data.checks[i.id]=r;saveJob();if(S.list)renderList();}})
+    .catch(x=>{const prev=S.before[k];delete S.pend[k];delete S.before[k];delete S.saving[k];
+      if(here()){S.data.checks[i.id]=prev;saveJob();if(S.list)renderList();}
+      if(!/AUTH/.test(x.message))toast('Not saved – tick it again ('+x.message+')');});})();}
+function removeItem(i){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{S.data.items=S.data.items.filter(x=>x.id!==i.id);saveJob();renderList();toast('Removed from this job');}).catch(x=>toast(x.message));}
 document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{S.filter=c.dataset.f;document.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));renderList();}));
 /* keep trade headings pinned just under the app header, whatever its height */
 function setHdr(){document.documentElement.style.setProperty('--hdr',document.querySelector('header.top').getBoundingClientRect().height+'px');}

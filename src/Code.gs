@@ -201,9 +201,20 @@ function login(name, pin) {
 /** Confirms a saved session on app start. */
 function whoAmI(token) { const u = user_(token); return { name: u.name, admin: u.admin }; }
 
+/** App start-up in ONE round trip (each call to Google costs a second or more):
+ *  who is signed in, the job list and, if asked, one job's checklists. */
+function startup(token, jobId) {
+  const u = user_(token);
+  const jobs = jobs_();
+  let job = null;
+  jobId = String(jobId || '');
+  if (jobId && jobs.some(j => j.id === jobId)) { try { job = job_(jobId); } catch (e) { job = null; } }
+  return { me: { name: u.name, admin: u.admin }, jobs: jobs, job: job };
+}
+
 /* ---------------- jobs ---------------- */
-function getJobs(token) {
-  user_(token);
+function getJobs(token) { user_(token); return jobs_(); }
+function jobs_() {
   return rows_('Jobs')
     .filter(j => !String(j['Active']).trim() || yes_(j['Active']))
     .map(j => ({ id: String(j['JobID']), name: String(j['Job Name']), address: String(j['Address'] || ''), created: j['Created At'] instanceof Date ? j['Created At'].getTime() : 0 }))
@@ -221,8 +232,8 @@ function createJob(token, name, address) {
 }
 
 /** Everything for one job: all checklists' items plus the latest status of each. */
-function getJob(token, jobId) {
-  user_(token);
+function getJob(token, jobId) { user_(token); return job_(jobId); }
+function job_(jobId) {
   jobId = String(jobId);
   const job = rows_('Jobs').find(j => String(j['JobID']) === jobId);
   if (!job) throw new Error('That job no longer exists.');
@@ -264,12 +275,12 @@ function addNote(token, jobId, itemId, list, text) {
   text = String(text || '').trim();
   if (!text) throw new Error('Type a note first.');
   if (text.length > NOTE_MAX) throw new Error('That note is too long (' + NOTE_MAX + ' characters at most).');
-  return withLock_(() => {
-    ensureNotes_();
-    const now = new Date();
-    append_('Notes', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Checklist': Number(list) || '', 'Note': text, 'Name': u.name, 'Timestamp': now });
-    return { text: text, name: u.name, at: fmt_(now) };
-  });
+  // Adding a row is safe on its own, so notes don't queue behind other people's requests;
+  // the lock is only needed the first time, to create the Notes tab.
+  if (!SpreadsheetApp.getActive().getSheetByName('Notes')) withLock_(ensureNotes_);
+  const now = new Date();
+  append_('Notes', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Checklist': Number(list) || '', 'Note': text, 'Name': u.name, 'Timestamp': now });
+  return { text: text, name: u.name, at: fmt_(now) };
 }
 function ensureNotes_() {
   const ss = SpreadsheetApp.getActive();
@@ -283,11 +294,10 @@ function ensureNotes_() {
 function setCheck(token, jobId, itemId, list, status) {
   const u = user_(token);
   if (['Done', 'N/A', 'Cleared'].indexOf(status) < 0) throw new Error('Unknown status.');
-  return withLock_(() => {
-    const now = new Date();
-    append_('Check Log', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Checklist': Number(list), 'Status': status, 'Name': u.name, 'Timestamp': now });
-    return status === 'Cleared' ? null : { status: status, name: u.name, at: fmt_(now) };
-  });
+  // One appended row per tick: safe without the lock, so ticks never wait behind other requests.
+  const now = new Date();
+  append_('Check Log', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Checklist': Number(list), 'Status': status, 'Name': u.name, 'Timestamp': now });
+  return status === 'Cleared' ? null : { status: status, name: u.name, at: fmt_(now) };
 }
 
 /** rows: [{list, trade, area, critical, text}], scope: 'job' or 'all' (master list – Admin only). */

@@ -21,7 +21,7 @@ const ctx={SpreadsheetApp:{getActive:()=>({getSheetByName:n=>sheets[n]||null,ins
  Utilities:{getUuid:()=>crypto.randomUUID(),computeHmacSha256Signature:(p,s)=>[...crypto.createHmac('sha256',s).update(p).digest()],
   base64EncodeWebSafe:x=>Buffer.from(typeof x==='string'?x:Buffer.from(x.map(b=>b&255))).toString('base64').replace(/\+/g,'-').replace(/\//g,'_'),
   base64DecodeWebSafe:s=>[...Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64')],newBlob:b=>({getDataAsString:()=>Buffer.from(b.map(x=>x&255)).toString()}),formatDate:d=>d.toISOString().slice(5,16)}};
-const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote};')(...Object.values(ctx));
+const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup};')(...Object.values(ctx));
 const ok=(c,m)=>{if(!c){console.log('FAIL',m);process.exitCode=1}else console.log('ok',m)};
 // login before PINs exist -> rejected, but upgrade runs
 try{A.login('Mark Ellis','1');ok(false,'no pin')}catch(e){console.log('   msg:',e.message);ok(/not recognised/.test(e.message),'no PIN yet -> rejected')}
@@ -86,3 +86,18 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  const fr=A.getJob(t2,J.id).items.filter(i=>i.list===4&&i.trade==='Framing').sort((a,b)=>a.order-b.order).map(i=>i.text);
  ok(fr.slice(0,4).join('|')==='Second batch A|Second batch B|First batch A|First batch B','newest added tasks first, typed order kept within a batch');
  ok(fr.length>4&&A.getJob(t2,J.id).items.filter(i=>i.src==='j').every(i=>i.order<0),'added tasks sort ahead of master-list tasks');}
+// start-up in one request: who is signed in + jobs + the open job
+{const t=A.login('Mark Ellis',sheets['Users'].data[1][4]).token;
+ const s=A.startup(t,'J1');
+ ok(s.me.name==='Mark Ellis'&&s.me.admin===true,'startup returns who is signed in');
+ ok(s.jobs.length===A.getJobs(t).length&&s.jobs.some(j=>j.id==='J1'),'startup returns the job list');
+ ok(s.job&&s.job.job.id==='J1'&&JSON.stringify(s.job)===JSON.stringify(A.getJob(t,'J1')),'startup returns the same job data as getJob');
+ ok(A.startup(t,'').job===null&&A.startup(t,'NOPE').job===null,'startup without a job, or with a missing job, returns no job');
+ try{A.startup('bad','J1');ok(false,'auth')}catch(e){ok(e.message==='AUTH','startup refuses a bad sign-in')}
+ // ticks no longer take the lock, but still log one row each and the latest wins
+ const before=sheets['Check Log'].data.length;
+ A.setCheck(t,'J1','t002',5,'Done');A.setCheck(t,'J1','t002',5,'Cleared');A.setCheck(t,'J1','t002',5,'Done');
+ ok(sheets['Check Log'].data.length===before+3,'each tick adds one Check Log row');
+ ok(A.getJob(t,'J1').checks['t002'].status==='Done','latest tick wins');
+ ok(sheets['Check Log'].data.slice(-1)[0][4]==='Mark Ellis','tick logged with the signed-in name');}
+
