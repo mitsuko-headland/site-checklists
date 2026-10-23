@@ -35,9 +35,9 @@ Then paste it into GitHub: site-checklists repository → Settings → Secrets a
 | Users | Name, PIN, Active, Admin — Active/Admin count as yes if the cell starts with Y (blank Active blocks sign-in) |
 | Items (master list) | ItemID, Checklist, Trade, Area, Critical, Item, Division, Order, Active |
 | Jobs | JobID, Job Name, Address, Created By, Created At, Active |
-| Job Items | JobID, ItemID, Type (Item / HIDE), Checklist, Trade, Area, Critical, Item, Added By, Added At, Removed |
+| Job Items | JobID, ItemID, Type (Item / HIDE / EDIT – EDIT = master task changed for this job only, one row per job+task, updated in place), Checklist, Trade, Area, Critical, Item, Added By, Added At, Removed |
 | Check Log | JobID, ItemID, Checklist, Status (Done / N/A / Cleared), Name, Timestamp — append-only audit trail; latest row per item wins |
-| Edit Log | Timestamp, Name, JobID, ItemID, Field, Old Value, New Value — created on first admin edit |
+| Edit Log | Timestamp, Name, JobID, ItemID, Field, Old Value, New Value — every edit and "Removed from job" made in the app; created on first use |
 | Notes | JobID, ItemID, Checklist, Note, Name, Timestamp — created on first note; append-only, shown oldest first |
 | Trades | Code, Trade — heading codes and sort order (lowest code first, ties keep tab order, no code = last). Seeded from `TRADES` in Code.gs on first run; after that the tab is the source. Codes stored as text |
 | Setup | Instructions for the owner; rewritten by `writeSetupTab_` when `SETUP_TEXT_VERSION` changes |
@@ -52,7 +52,8 @@ Checklists: 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough I
 - Filter row: **All / Still to do / Critical items / Completed** (Completed = Done or N/A; choosing it unfolds every trade). **Collapse all / Expand all** (#foldAll, class `fold-all`, not a `.chip`) sits at the far right as plain accent text with a small arrow; it folds or opens every trade shown, and its label flips when everything shown is folded. Filter handlers select `.chip[data-f]`.
 - Job-only tasks show "Added by <name> · <Mon d>" (from Job Items Added By / Added At; `addedBy`/`addedOn` in getJob). Master-list tasks never show who added them; tick stamps (who ticked + date/time) show on every task.
 - "+" scrolls the heading and its add box to the top of the screen (so the phone keyboard doesn't cover it). Tasks added to one job (either button) show at the **top** of their trade, newest batch first, typed order within a batch; trade order still follows the master list.
-- Admins (Admin = Y): add items to the master list; **Edit** on every item (wording, trade, area, critical flag) – edits to master items apply to every job and are logged; **Remove from this job** is inside the edit form (two taps to confirm).
+- **Everyone** signed in: **Edit** on every task (wording, trade, area, critical flag) and **Remove from this job** (inside the edit form, two taps) – always **this job only**. A master task edited on a job gets an EDIT row in Job Items and shows an "edited for this job" tag; other jobs keep the master wording. Every edit/removal is logged in Edit Log. Changing a master task on every job is done only on the sheet's Items tab (owner's rule).
+- Admins (Admin = Y): additionally add tasks to the master list from "+ Add items" → "All jobs (master list)".
 - Trade headings stay pinned under the app header while scrolling. Auto-refresh every 45 s, paused while an editor, note box or add form is open.
 - Trade headings show the code from the Trades tab (e.g. "1050 Site Supervisor") and trades sort by code within each checklist; the trade drop-downs list every Trades-tab trade plus any trade already used. A heading only appears when the checklist has items for that trade.
 - 2026-10-23 one-time trade moves (`tradesUpgrade_`, script property `TRADES_V1`): Energy Consultant, Surveyor, Cleaning → Site Supervisor; Eavestrough → Metalwork; Siding, Masonry (Brick), Masonry (Stone), Deck Carpentry → Exterior Carpentry; Parging → Concrete; Closet Shelving → Finish Carpentry; master items S001–S004 → Mobilize & Startup Site Protection. Logged in Edit Log as "Setup (trade codes)"; counts + uncoded trades written to the Setup tab.
@@ -60,8 +61,8 @@ Checklists: 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough I
 - Speed: the app starts with ONE backend call, `startup(token, jobId)` (who's signed in + job list + the open job), instead of whoAmI → getJobs → getJob. Each phone keeps a saved copy (localStorage keys `sc.c.*`: me, jobs, last 5 jobs' data) so the app paints instantly, then updates from the sheet; the copy is cleared on sign-out. Ticks show instantly and save in the background (one write at a time per task; a failed save undoes the tick and says so). `setCheck` and `addNote` only append a row, so they no longer take the script lock.
 
 ## Tests
-`node tests/backend.test.js` runs 63 checks against a mock of SpreadsheetApp/Utilities/etc. (sign-in, lockout, sheet upgrade, ticks, add/edit/remove, Edit Log, notes, startup, trade codes, added-by). Run it before every push that touches `src/Code.gs`, and add checks for new behaviour – the owner can't debug Apps Script. For `src/Index.html`, at least confirm the script parses: replace `<?= … ?>` scriptlets with a placeholder and run it through `new Function`.
+`node tests/backend.test.js` runs 69 checks against a mock of SpreadsheetApp/Utilities/etc. (sign-in, lockout, sheet upgrade, ticks, add/edit/remove, Edit Log, notes, startup, trade codes, added-by, job-only edits, removal log). Run it before every push that touches `src/Code.gs`, and add checks for new behaviour – the owner can't debug Apps Script. For `src/Index.html`, at least confirm the script parses: replace `<?= … ?>` scriptlets with a placeholder and run it through `new Function`.
 
 ## Open items / ideas not yet requested
-- Admin features the owner may want later: retire a master item from the app, archive finished jobs, manage users/PINs from the app.
+- Admin features the owner may want later (master edits/retiring stay on the sheet by her rule): archive finished jobs, manage users/PINs from the app.
 - Short link for the team (owner to create with TinyURL).

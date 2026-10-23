@@ -50,15 +50,21 @@ A.removeItem(t,j.id,'t002','m',5);ok(!A.getJob(t,j.id).items.some(i=>i.id==='t00
 U[1][2]='N';try{A.getJobs(t);ok(false,'blk')}catch(e){ok(e.message==='AUTH','blocked user loses access')}
 
 U[1][2]='Y';
-try{A.editItem(r3t(),'J1','t003','m',{text:'x'});}catch(e){}
 function r3t(){U[2][4]='5555';delete cache['fail:joe site'];return A.login('Joe Site','5555').token;}
-try{A.editItem(r3t(),'J1','t003','m',{text:'New'});ok(false,'nonadmin edit')}catch(e){ok(/Only admins/.test(e.message),'non-admin cannot edit')}
 const t2=A.login('Mark Ellis','0123').token;
-let n=A.editItem(t2,'J1','t003','m',{text:'Paint touch-ups complete',trade:'Painting',area:'ceilings',critical:true});
-ok(n===4,'admin edit changes 4 fields');
-const it=sheets['Items'].data.find(r=>r[0]==='t003');ok(it[5]==='Paint touch-ups complete'&&it[2]==='Painting'&&it[3]==='ceilings'&&it[4]==='CRITICAL','master item updated in sheet');
-const L=sheets['Edit Log'].data;ok(L[0][0]==='Timestamp'&&L.filter(r=>r[1]!=='Setup (trade codes)').length===5&&L.some(r=>r[4]==='Wording'&&r[5]==='Paint done'&&r[6]==='Paint touch-ups complete'&&r[1]==='Mark Ellis'),'Edit Log records old -> new with name');
+// editing a master-list task changes it on THIS job only (anyone can edit); Items tab untouched
+const Jother=A.createJob(t2,'Other job','');
+let n=A.editItem(r3t(),'J1','t003','m',{text:'Paint touch-ups complete',trade:'Painting',area:'ceilings',critical:true});
+ok(n===4,'non-admin edit of a master task changes 4 fields');
+const it=sheets['Items'].data.find(r=>r[0]==='t003');ok(it[5]==='Paint done'&&it[2]==='Paint','master list on the Items tab is unchanged');
+{const e=A.getJob(t2,'J1').items.find(i=>i.id==='t003'),o=A.getJob(t2,Jother.id).items.find(i=>i.id==='t003');
+ ok(e.text==='Paint touch-ups complete'&&e.trade==='Painting'&&e.area==='ceilings'&&e.critical&&e.edited,'edited job shows the new wording, marked edited');
+ ok(o.text==='Paint done'&&!o.edited,'other jobs keep the master wording');}
+ok(sheets['Job Items'].data.filter(r=>r[2]==='EDIT'&&r[1]==='t003'&&r[0]==='J1').length===1,'one EDIT row for that job');
+const L=sheets['Edit Log'].data;ok(L[0][0]==='Timestamp'&&L.filter(r=>r[1]==='Joe Site'&&r[2]==='J1'&&r[3]==='t003').length===4&&L.some(r=>r[4]==='Wording'&&r[5]==='Paint done'&&r[6]==='Paint touch-ups complete'&&r[1]==='Joe Site'),'Edit Log records job, old -> new and who');
 ok(A.editItem(t2,'J1','t003','m',{text:'Paint touch-ups complete',trade:'Painting',area:'ceilings',critical:true})===0,'no-op edit logs nothing');
+ok(A.editItem(t2,'J1','t003','m',{text:'Paint touch-ups done',trade:'Painting',area:'ceilings',critical:true})===1&&sheets['Job Items'].data.filter(r=>r[2]==='EDIT'&&r[1]==='t003').length===1&&A.getJob(t2,'J1').items.find(i=>i.id==='t003').text==='Paint touch-ups done','second edit updates the same EDIT row');
+ok(!A.getJob(t2,'J1').items.some(i=>i.src==='j'&&i.id==='t003'),'EDIT rows never show as extra tasks');
 ok(A.editItem(t2,'J1','X1','j',{text:'Job extra (edited)',trade:'Plumbing',area:'',critical:false})===2,'job-only item edit');
 ok(sheets['Job Items'].data.find(r=>r[1]==='X1')[7]==='Job extra (edited)','job item updated');
 try{A.editItem(t2,'J1','t003','m',{text:'  '});ok(false,'empty')}catch(e){ok(/cannot be empty/.test(e.message),'empty wording rejected')}
@@ -124,4 +130,9 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  const d=A.getJob(t,J.id),x=d.items.find(i=>i.text==='Extra king stud'),m=d.items.find(i=>i.src==='m');
  ok(x.addedBy==='Mark Ellis'&&/^\d\d-\d\d/.test(x.addedOn),'job-only task carries who added it and the day');
  ok(!('addedBy' in m)&&!('addedOn' in m),'master-list tasks carry no added-by');}
+// anyone can remove a task from one job; the removal is logged
+{const t=r3t();const J=A.createJob(t,'Remove test','');
+ A.removeItem(t,J.id,'t002','m',5);
+ ok(!A.getJob(t,J.id).items.some(i=>i.id==='t002')&&A.getJob(t,'J1').items.some(i=>i.id==='t002'),'non-admin removes a master task from one job only');
+ ok(sheets['Edit Log'].data.some(r=>r[1]==='Joe Site'&&r[2]===J.id&&r[3]==='t002'&&r[4]==='Removed from job'&&r[5]==='Screws mudded'),'removal is in the Edit Log with who and the task wording');}
 

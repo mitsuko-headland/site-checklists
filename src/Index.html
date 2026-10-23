@@ -310,14 +310,14 @@ function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
   const row=el('div',{class:'item'+(i.critical?' isHold':'')+(st==='Done'?' done':'')+(st==='N/A'?' na':'')});
   row.append(el('button',{class:'tick',type:'button','aria-label':st?'Clear':'Mark done','aria-pressed':String(st==='Done'),text:st==='Done'?'✓':(st==='N/A'?'N/A':''),onclick:()=>setCheck(i,st?'Cleared':'Done')}));
   const txt=el('div',{class:'txt'},document.createTextNode(i.text));const tags=el('div',{class:'tags'});
-  if(i.critical)tags.append(el('span',{class:'pill hold',text:'CRITICAL'}));if(i.area)tags.append(el('span',{class:'tag',text:i.area}));if(i.src==='j')tags.append(el('span',{class:'tag extra',text:'this job'}));
+  if(i.critical)tags.append(el('span',{class:'pill hold',text:'CRITICAL'}));if(i.area)tags.append(el('span',{class:'tag',text:i.area}));if(i.src==='j')tags.append(el('span',{class:'tag extra',text:'this job'}));if(i.edited)tags.append(el('span',{class:'tag extra',text:'edited for this job'}));
   if(tags.childNodes.length)txt.append(tags);row.append(txt);
   if(i.src==='j'&&i.addedBy)row.append(el('div',{class:'added',text:'Added by '+i.addedBy+(i.addedOn?' · '+i.addedOn:'')}));
   if(st)row.append(el('div',{class:'stamp',text:(st==='N/A'?'N/A ':'✓ ')+c.name+' · '+c.at}));
   const ns=(S.data.notes||{})[i.id]||[];
   if(ns.length)row.append(el('div',{class:'notes'},...ns.map(n=>el('div',{class:'nt'},document.createTextNode(n.text),el('small',{text:n.name+' · '+n.at})))));
   const side=el('div',{class:'side'});
-  if(S.me&&S.me.admin)side.append(el('button',{class:'link',type:'button',text:'Edit',onclick:()=>openEditor(row,i)}));
+  if(S.me)side.append(el('button',{class:'link',type:'button',text:'Edit',onclick:()=>openEditor(row,i)}));
   side.append(el('button',{class:'link',type:'button',text:'Add note',onclick:()=>{if(S.noteFor!==i.id){S.noteFor=i.id;S.noteDraft='';}renderList();focusIn('.note-box textarea');}}));
   row.append(side);if(S.noteFor===i.id)row.append(noteBox(i));return row;}
 /* Notes: anyone signed in; each note is kept with name + time (running log for this job). */
@@ -354,7 +354,7 @@ function quickAdd(t){const dr=S.qaddDraft;
       .catch(x=>{dr.busy=false;if(S.list)renderList();toast(x.message);});};
   return el('div',{class:'qadd'},el('label',{class:'f'},document.createTextNode('New '+t+' tasks – this job only, one per line'),ta),area,
     el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),el('div',{class:'row'},save,cancel));}
-/* Admin editor: wording, trade, area, critical. */
+/* Editor (anyone signed in): wording, trade, area, critical – this job only; master tasks get a per-job EDIT row. */
 function openEditor(row,i){if(row.querySelector('.editor'))return;
   const ta=el('textarea',{'aria-label':'Item wording'});ta.value=i.text;
   const tp=tradePicker(tradeName(i.trade));const area=el('input',{placeholder:'Area (optional)','aria-label':'Area'});area.value=i.area||'';
@@ -362,7 +362,7 @@ function openEditor(row,i){if(row.querySelector('.editor'))return;
   const save=el('button',{class:'btn primary',type:'button',text:'Save'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});
   const rm=el('button',{class:'link danger',type:'button',text:'Remove from this job'});
   rm.onclick=()=>{if(rm.dataset.armed){rm.disabled=true;removeItem(i);return;}rm.dataset.armed='1';rm.textContent='Tap again to remove from this job';setTimeout(()=>{if(rm.isConnected&&!rm.disabled){delete rm.dataset.armed;rm.textContent='Remove from this job';}},4000);};
-  const ed=el('div',{class:'editor'},el('label',{class:'f'},document.createTextNode(i.src==='m'?'Wording (changes this item on every job)':'Wording'),ta),
+  const ed=el('div',{class:'editor'},el('label',{class:'f'},document.createTextNode('Wording – changes this task on this job only'),ta),
     el('div',{class:'grid2'},el('label',{class:'f'},document.createTextNode('Trade'),tp.el),el('label',{class:'f'},document.createTextNode('Area'),area)),
     el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),el('div',{class:'row'},save,cancel),rm);
   cancel.onclick=()=>ed.remove();

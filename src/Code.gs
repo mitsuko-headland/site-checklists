@@ -6,6 +6,7 @@
  *   Items      : ItemID | Checklist | Trade | Area | Critical | Item | Division | Order | Active
  *   Jobs       : JobID | Job Name | Address | Created By | Created At | Active
  *   Job Items  : JobID | ItemID | Type | Checklist | Trade | Area | Critical | Item | Added By | Added At | Removed
+ *                Type = Item (task added to one job) | HIDE (master task removed from one job) | EDIT (master task changed for one job)
  *   Check Log  : JobID | ItemID | Checklist | Status | Name | Timestamp
  *   Edit Log   : Timestamp | Name | JobID | ItemID | Field | Old Value | New Value   (created automatically)
  *   Notes      : JobID | ItemID | Checklist | Note | Name | Timestamp                 (created automatically)
@@ -18,7 +19,7 @@ const SESSION_DAYS = 30;
 const MAX_FAILS = 5;            // wrong PINs allowed per name …
 const LOCK_MINUTES = 15;        // … before that name is locked for this long
 const CHECKLISTS = 6;           // 1 Project Startup & Site Protection … 6 Finishing
-const SETUP_TEXT_VERSION = '5';
+const SETUP_TEXT_VERSION = '6';
 const NOTE_MAX = 2000;          // longest note accepted, in characters  // bump to rewrite the Setup tab after instructions change
 /* Trade codes (from Headland's divisions list). Seeds the Trades tab the first time; after that the tab is the source. */
 const TRADES = [['1036', 'Mobilize & Startup Site Protection'], ['1050', 'Site Supervisor'], ['2001', 'Hazardous Demolition'], ['2006', 'Demolition'],
@@ -190,16 +191,16 @@ function writeSetupTab_(ss) {
     'DO NOT RENAME',
     'Tab names (Users, Items, Jobs, Job Items, Check Log, Edit Log, Notes) or the column headings in row 1. The app finds them by name. Renaming the file, reordering columns, formatting, and adding extra columns to the right are all fine.', '',
     'WHO CAN SIGN IN',
-    'People on the Users tab, with their Name and PIN. Active must start with Y to allow sign-in (blank or N blocks, immediately). Admin starting with Y lets that person add items to the master list and edit any item\'s wording, trade, area and critical flag in the app. A name is locked for 15 minutes after 5 wrong PINs. Sign-ins last 30 days on each phone.', '',
+    'People on the Users tab, with their Name and PIN. Active must start with Y to allow sign-in (blank or N blocks, immediately). Admin starting with Y lets that person add items to the master list from the app. Everyone can edit or remove any task in the app, but only for the job they are on; every change is in Edit Log. To change a master-list task on every job, edit it here on the Items tab. A name is locked for 15 minutes after 5 wrong PINs. Sign-ins last 30 days on each phone.', '',
     'CHECKLISTS (the Checklist column on Items)',
     '1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough In · 4 Rough In & Pre-Drywall · 5 Drywall · 6 Finishing', '',
     'TABS',
     'Users – the authorised list (Name | PIN | Active | Admin).',
     'Items – the master checklist every job uses. Critical = CRITICAL marks a stop-point item. Set Active = N to retire an item. Do not change ItemID.',
     'Jobs – created from the app. Set Active = N to hide a finished job.',
-    'Job Items – items added to (or removed from) a single job from the app. Do not edit by hand.',
+    'Job Items – tasks added to, removed from (HIDE) or changed for (EDIT) a single job from the app. Do not edit by hand.',
     'Check Log – every tick and untick, with name and date/time. Never edit or sort; it is the audit trail.',
-    'Edit Log – every change admins make to an item in the app: old value, new value, who and when. Created automatically on the first edit.',
+    'Edit Log – every change and removal made to a task in the app: which job, old value, new value, who and when. Created automatically on the first edit.',
     'Notes – notes people add to a task on one job, with name and date/time. Created automatically on the first note. Never edit or sort; the app shows them in this order.',
     'Trades – the code shown on each trade heading, and the order trades are sorted in (lowest code first). Change a code here any time. A trade name must match the Trade column on Items exactly (capitals don\'t matter). Trades with no code show at the end.'];
   let rep = null;
@@ -300,16 +301,22 @@ function job_(jobId) {
   const job = rows_('Jobs').find(j => String(j['JobID']) === jobId);
   if (!job) throw new Error('That job no longer exists.');
   const extras = rows_('Job Items').filter(r => String(r['JobID']) === jobId && !yes_(r['Removed']));
-  const hidden = new Set(extras.filter(r => String(r['Type']).toUpperCase() === 'HIDE').map(r => String(r['ItemID'])));
+  const type = r => String(r['Type']).trim().toUpperCase();
+  const hidden = new Set(extras.filter(r => type(r) === 'HIDE').map(r => String(r['ItemID'])));
+  const edits = {};                            // master task changed for this job only (latest row wins)
+  extras.filter(r => type(r) === 'EDIT').forEach(r => { edits[String(r['ItemID'])] = r; });
   const items = [];
   rows_('Items').forEach(r => {
     const id = String(r['ItemID']);
     if (!id || hidden.has(id) || (String(r['Active']).trim() && !yes_(r['Active']))) return;
-    items.push({ id: id, src: 'm', list: Number(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: Number(r['Order']) || 0 });
+    const it = { id: id, src: 'm', list: Number(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: Number(r['Order']) || 0 };
+    const e = edits[id];
+    if (e) { it.text = String(e['Item']); it.trade = String(e['Trade'] || 'General'); it.area = String(e['Area'] || ''); it.critical = critical_(e['Critical']); it.edited = true; }
+    items.push(it);
   });
   // Tasks added to this job go at the top of their trade: newest batch first, each batch in the order it was typed.
   const at = r => (r['Added At'] instanceof Date ? r['Added At'].getTime() : 0);
-  extras.filter(r => String(r['Type']).toUpperCase() !== 'HIDE')
+  extras.filter(r => type(r) !== 'HIDE' && type(r) !== 'EDIT')
     .sort((a, b) => (at(b) - at(a)) || (a._row - b._row))
     .forEach((r, k) => {
       // job-only tasks carry who added them and the day (master-list tasks never do)
@@ -385,33 +392,46 @@ function addItems(token, jobId, scope, rows) {
   });
 }
 
-/** Admin only: change an item's wording, trade, area or critical flag. Every change is written to Edit Log. */
+/** Anyone signed in: change a task's wording, trade, area or critical flag ON THIS JOB ONLY.
+ *  Job-only tasks are changed in place; a master-list task gets an EDIT row in Job Items for this job,
+ *  so other jobs keep the master wording (change the Items tab to change it everywhere).
+ *  Every change is written to Edit Log with who and when. */
 function editItem(token, jobId, itemId, src, changes) {
   const u = user_(token);
-  if (!u.admin) throw new Error('Only admins can edit items.');
   changes = changes || {};
   const text = String(changes.text || '').trim();
   if (!text) throw new Error('The item wording cannot be empty.');
+  jobId = String(jobId); itemId = String(itemId);
   const next = { 'Item': text, 'Trade': String(changes.trade || 'General').trim(), 'Area': String(changes.area || '').trim(), 'Critical': changes.critical ? 'CRITICAL' : '' };
+  const val = (r, f) => f === 'Critical' ? (critical_(r[f]) ? 'CRITICAL' : '') : String(r[f] === undefined ? '' : r[f]).trim();
   return withLock_(() => {
-    const tab = src === 'm' ? 'Items' : 'Job Items';
-    const sh = sheet_(tab);
+    const sh = sheet_('Job Items');
     const head = head_(sh);
-    const r = rows_(tab).find(x => String(x['ItemID']) === String(itemId) && (src === 'm' || String(x['JobID']) === String(jobId)));
-    if (!r) throw new Error('That item no longer exists.');
-    ensureEditLog_();
+    const jobRows = rows_('Job Items').filter(x => String(x['JobID']) === jobId && !yes_(x['Removed']));
+    let row = null, current = null;
+    if (src === 'm') {
+      const m = rows_('Items').find(x => String(x['ItemID']) === itemId);
+      if (!m) throw new Error('That item no longer exists.');
+      const ed = jobRows.filter(x => String(x['ItemID']) === itemId && String(x['Type']).trim().toUpperCase() === 'EDIT');
+      row = ed.length ? ed[ed.length - 1] : null;
+      current = row || m;
+    } else {
+      row = jobRows.find(x => String(x['ItemID']) === itemId && String(x['Type']).trim().toUpperCase() !== 'EDIT');
+      if (!row) throw new Error('That item no longer exists.');
+      current = row;
+    }
+    const fields = Object.keys(next).filter(f => val(current, f) !== next[f]);
+    if (!fields.length) return 0;
     const now = new Date();
-    let changed = 0;
-    Object.keys(next).forEach(field => {
-      const col = head.indexOf(field);
-      if (col < 0) return;
-      const old = field === 'Critical' ? (critical_(r[field]) ? 'CRITICAL' : '') : String(r[field] === undefined ? '' : r[field]).trim();
-      if (old === next[field]) return;
-      sh.getRange(r._row, col + 1).setValue(next[field]);
-      append_('Edit Log', { 'Timestamp': now, 'Name': u.name, 'JobID': src === 'm' ? '(all jobs)' : String(jobId), 'ItemID': String(itemId), 'Field': field === 'Item' ? 'Wording' : field, 'Old Value': old, 'New Value': next[field] });
-      changed++;
-    });
-    return changed;
+    if (src === 'm' && !row) {
+      const m = rows_('Items').find(x => String(x['ItemID']) === itemId);
+      append_('Job Items', { 'JobID': jobId, 'ItemID': itemId, 'Type': 'EDIT', 'Checklist': Number(m['Checklist']), 'Trade': next['Trade'], 'Area': next['Area'], 'Critical': next['Critical'], 'Item': next['Item'], 'Added By': u.name, 'Added At': now, 'Removed': '' });
+    } else {
+      fields.forEach(f => { const col = head.indexOf(f); if (col >= 0) sh.getRange(row._row, col + 1).setValue(next[f]); });
+    }
+    ensureEditLog_();
+    fields.forEach(f => append_('Edit Log', { 'Timestamp': now, 'Name': u.name, 'JobID': jobId, 'ItemID': itemId, 'Field': f === 'Item' ? 'Wording' : f, 'Old Value': val(current, f), 'New Value': next[f] }));
+    return fields.length;
   });
 }
 function ensureEditLog_() {
@@ -426,12 +446,18 @@ function ensureEditLog_() {
 function removeItem(token, jobId, itemId, src, list) {
   const u = user_(token);
   return withLock_(() => {
+    const now = new Date();
+    let text = '';
+    if (src === 'm') { const m = rows_('Items').find(x => String(x['ItemID']) === String(itemId)); text = m ? String(m['Item']) : ''; }
+    else { const j = rows_('Job Items').find(x => String(x['JobID']) === String(jobId) && String(x['ItemID']) === String(itemId)); text = j ? String(j['Item']) : ''; }
+    ensureEditLog_();
+    append_('Edit Log', { 'Timestamp': now, 'Name': u.name, 'JobID': String(jobId), 'ItemID': String(itemId), 'Field': 'Removed from job', 'Old Value': text, 'New Value': '' });
     if (src === 'm') {
-      append_('Job Items', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Type': 'HIDE', 'Checklist': Number(list), 'Added By': u.name, 'Added At': new Date(), 'Removed': '' });
+      append_('Job Items', { 'JobID': String(jobId), 'ItemID': String(itemId), 'Type': 'HIDE', 'Checklist': Number(list), 'Added By': u.name, 'Added At': now, 'Removed': '' });
     } else {
       const sh = sheet_('Job Items');
       const head = head_(sh);
-      const r = rows_('Job Items').find(x => String(x['JobID']) === String(jobId) && String(x['ItemID']) === String(itemId));
+      const r = rows_('Job Items').find(x => String(x['JobID']) === String(jobId) && String(x['ItemID']) === String(itemId) && String(x['Type']).trim().toUpperCase() !== 'EDIT');
       if (r) sh.getRange(r._row, head.indexOf('Removed') + 1).setValue('Y');
     }
     return true;
