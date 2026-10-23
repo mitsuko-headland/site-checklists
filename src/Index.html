@@ -276,7 +276,7 @@ $('jobSearch').addEventListener('input',renderJobs);
 $('newJobForm').addEventListener('submit',e=>{e.preventDefault();call('createJob',S.token,$('njName').value,$('njAddr').value).then(j=>{$('newJobForm').reset();$('newJobPanel').open=false;toast('Job created');S.jobs.unshift(j);openJob(j.id);}).catch(x=>toast(x.message));});
 
 /* ---------- one job ---------- */
-function openJob(id,noLoad){const j=S.jobs.find(x=>x.id===id);store.set('sc.job',id);S.job=j||{id:id,name:'Job',address:''};header(S.job.name,S.job.address||'Choose a checklist');
+function openJob(id,noLoad){closeEditor();const j=S.jobs.find(x=>x.id===id);store.set('sc.job',id);S.job=j||{id:id,name:'Job',address:''};header(S.job.name,S.job.address||'Choose a checklist');
   S.data=saved.get('job.'+id);S.list=null;$('jobLink').value=APP_URL+'?job='+id;show('vLists');
   if(S.data){renderTrades();renderLists();}else{$('listList').textContent='';$('listList').append(el('div',{class:'note',text:'Loading…'}));}
   if(!noLoad)loadJob();}
@@ -310,11 +310,14 @@ function listHideBtn(w,hid){const b=el('button',{class:'lhide',type:'button',tex
     call('setListHidden',S.token,jobId,w.n,want).then(()=>toast(w.name+(want?' hidden on this job':' shown again on this job')))
       .catch(x=>{if(S.job&&S.job.id===jobId&&S.data){S.data.hiddenLists=was;saveJob();if(!$('vLists').hidden)renderLists();}if(!/AUTH/.test(x.message))toast('Not saved – '+x.message);});};
   return b;}
-function openList(n){S.list=n;S.filter='all';$('addPanel').hidden=true;S.fold=Object.create(null);S.qadd=null;S.noteFor=null;$('foldPad').style.height='0px';
+function openList(n){closeEditor();S.list=n;S.filter='all';$('addPanel').hidden=true;S.fold=Object.create(null);S.qadd=null;S.noteFor=null;$('foldPad').style.height='0px';
   document.querySelectorAll('.chip[data-f]').forEach(c=>c.setAttribute('aria-pressed',String(c.dataset.f==='all')));renderList();show('vList');}
 
 /* ---------- checklist ---------- */
-function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checklist '+w.n+' – '+w.name;
+function renderList(){const foc=S.editor&&S.editor.el.contains(document.activeElement)?document.activeElement:null;renderList_();
+  if(S.editor&&!S.editor.el.isConnected)S.editor=null;   // its task is gone (or filtered out)
+  if(foc&&foc.isConnected&&document.activeElement!==foc)foc.focus({preventScroll:true});}
+function renderList_(){const w=LISTS[S.list-1];$('listTitle').textContent='Checklist '+w.n+' – '+w.name;
   const items=itemsFor(S.list),s=stat(S.list),sum=$('summary');sum.textContent='';sum.append(el('b',{text:s.done+' of '+s.total+' done'}));if(s.crit)sum.append(el('span',{class:'pill hold',text:s.crit+' critical open'}));
   const g0=new Map();items.forEach(i=>{const t=tradeName(i.trade);if(!g0.has(t))g0.set(t,[]);g0.get(t).push(i);});
   const rank=l=>{const m=l.filter(i=>i.src==='m').map(i=>i.order);return m.length?Math.min(...m):Infinity;};   // trades keep their master-list order
@@ -347,7 +350,9 @@ function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
   const side=el('div',{class:'side'});
   if(S.me)side.append(el('button',{class:'link',type:'button',text:'Edit',onclick:()=>openEditor(row,i)}));
   side.append(el('button',{class:'link',type:'button',text:'Add note',onclick:()=>{if(S.noteFor!==i.id){S.noteFor=i.id;S.noteDraft='';}renderList();focusIn('.note-box textarea');}}));
-  row.append(side);if(S.noteFor===i.id)row.append(noteBox(i));return row;}
+  row.append(side);if(S.noteFor===i.id)row.append(noteBox(i));
+  if(S.editor&&S.editor.id===i.id&&S.job&&S.editor.jobId===S.job.id)row.append(S.editor.el);   // keep the open edit form
+  return row;}
 /* Notes: anyone signed in; each note is kept with name + time (running log for this job). */
 function noteBox(i){const ta=el('textarea',{class:'short','aria-label':'Note',maxlength:'2000',placeholder:'e.g. Backing missing at master bath vanity'});ta.value=S.noteDraft;ta.addEventListener('input',()=>S.noteDraft=ta.value);
   const save=el('button',{class:'btn primary',type:'button',text:'Save note'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});save.disabled=S.noteBusy;
@@ -383,7 +388,10 @@ function quickAdd(t){const dr=S.qaddDraft;
   return el('div',{class:'qadd'},el('label',{class:'f'},document.createTextNode('New '+t+' tasks – this job only, one per line'),ta),area,
     el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),el('div',{class:'row'},save,cancel));}
 /* Editor (anyone signed in): wording, trade, area, critical – this job only; master tasks get a per-job EDIT row. */
-function openEditor(row,i){if(row.querySelector('.editor'))return;
+/* The open form is kept in S.editor and re-attached after every redraw (loads, ticks, auto-refresh),
+   so it only ever closes on Save / Remove task / Cancel, and keeps everything typed in it. */
+function closeEditor(){if(S.editor){S.editor.el.remove();S.editor=null;}}
+function openEditor(row,i){if(S.editor&&S.editor.id===i.id&&S.editor.jobId===S.job.id)return;closeEditor();
   const ta=el('textarea',{'aria-label':'Item wording'});ta.value=i.text;
   const tp=tradePicker(tradeName(i.trade));const area=el('input',{placeholder:'Area (optional)','aria-label':'Area'});area.value=i.area||'';
   const crit=el('input',{type:'checkbox',style:'width:24px;height:24px;min-height:0'});crit.checked=!!i.critical;
@@ -395,10 +403,11 @@ function openEditor(row,i){if(row.querySelector('.editor'))return;
   const ed=el('div',{class:'editor'},el('label',{class:'f'},document.createTextNode('Wording – changes this task on this job only'),ta),
     el('div',{class:'grid2'},el('label',{class:'f'},document.createTextNode('Trade'),tp.el),el('label',{class:'f'},document.createTextNode('Area'),area)),
     el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),el('div',{class:'row'},save,cancel),rm);
-  cancel.onclick=()=>ed.remove();
-  save.onclick=()=>{if(rmBox.checked){save.disabled=true;removeItem(i,()=>save.disabled=false);return;}   // removing ignores any other changes
+  cancel.onclick=()=>closeEditor();
+  S.editor={id:i.id,jobId:S.job.id,el:ed};
+  save.onclick=()=>{if(rmBox.checked){save.disabled=true;removeItem(i,()=>save.disabled=false,()=>closeEditor());return;}   // removing ignores any other changes
     const trade=tp.value();if(!ta.value.trim()){toast('The wording cannot be empty');return;}if(!trade){toast('Choose a trade');return;}save.disabled=true;
-    call('editItem',S.token,S.job.id,i.id,i.src,{text:ta.value,trade,area:area.value,critical:crit.checked}).then(n=>{toast(n?'Item updated':'No changes');return loadJob();}).catch(x=>{save.disabled=false;toast(x.message);});};
+    call('editItem',S.token,S.job.id,i.id,i.src,{text:ta.value,trade,area:area.value,critical:crit.checked}).then(n=>{closeEditor();toast(n?'Item updated':'No changes');return loadJob();}).catch(x=>{save.disabled=false;toast(x.message);});};
   row.append(ed);ta.focus();}
 /* Trade drop-down with "+ Add a new trade…" */
 /* every trade on the Trades tab (in code order) plus any trade already used by an item */
@@ -425,7 +434,7 @@ function setCheck(i,status){const jobId=S.job.id,k=jobId+'|'+i.id;
     .catch(x=>{const prev=S.before[k];delete S.pend[k];delete S.before[k];delete S.saving[k];
       if(here()){S.data.checks[i.id]=prev;saveJob();if(S.list)renderList();}
       if(!/AUTH/.test(x.message))toast('Not saved – tick it again ('+x.message+')');});})();}
-function removeItem(i,onFail){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{S.data.items=S.data.items.filter(x=>x.id!==i.id);saveJob();renderList();toast('Removed from this job');}).catch(x=>{if(onFail)onFail();toast(x.message);});}
+function removeItem(i,onFail,onDone){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{if(onDone)onDone();S.data.items=S.data.items.filter(x=>x.id!==i.id);saveJob();renderList();toast('Removed from this job');}).catch(x=>{if(onFail)onFail();toast(x.message);});}
 document.querySelectorAll('.chip[data-f]').forEach(c=>c.addEventListener('click',()=>{S.filter=c.dataset.f;if(S.filter==='done')Object.keys(S.fold).forEach(t=>S.fold[t]=false);document.querySelectorAll('.chip[data-f]').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));renderList();}));
 /* Collapse all / Expand all: folds or opens every trade shown in this checklist */
 $('foldAll').addEventListener('click',()=>{const ts=S.shownTrades||[];const fold=!ts.every(t=>S.fold[t]&&S.qadd!==t);
