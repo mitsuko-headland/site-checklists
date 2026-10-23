@@ -61,7 +61,10 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
 .chips{display:flex;gap:8px;flex-wrap:wrap}
 .chip{min-height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:15px}
 .chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
-.chip.fold-all{border-style:dashed}
+/* Collapse all: plain text at the far right of the filter row, so it doesn't read as a filter */
+.fold-all{margin-left:auto;min-height:40px;padding:0 4px 0 10px;border:0;background:none;color:var(--accent);font-weight:600;font-size:15px;display:inline-flex;align-items:center;gap:6px}
+.fold-all .arw{font-size:11px}
+.added{grid-column:2;font-size:13px;color:var(--muted)}
 .tsec{margin-top:18px}
 .trade{position:sticky;top:var(--hdr,60px);z-index:3;background:var(--band);color:var(--band-ink);border-radius:10px 10px 0 0;display:flex;align-items:stretch;font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:.05em;text-transform:uppercase}
 .tsec.folded .trade{border-radius:10px}
@@ -160,7 +163,8 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
       <button class="chip" type="button" data-f="all" aria-pressed="true">All</button>
       <button class="chip" type="button" data-f="open" aria-pressed="false">Still to do</button>
       <button class="chip" type="button" data-f="critical" aria-pressed="false">Critical items</button>
-      <button class="chip fold-all" type="button" id="foldAll">Collapse all</button>
+      <button class="chip" type="button" data-f="done" aria-pressed="false">Completed</button>
+      <button class="fold-all" type="button" id="foldAll">Collapse all</button>
     </div>
     <div id="groups"></div>
     <div class="row">
@@ -290,7 +294,7 @@ function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checkl
   const tk=t=>{const x=tab.get(tkey(t));return x&&x.code?[codeNum(x.code),x.k]:[Infinity,Infinity];};
   const groups=new Map([...g0].map((e,k)=>[e,k]).sort((a,b)=>{const A=tk(a[0][0]),B=tk(b[0][0]);return cmp(A[0],B[0])||cmp(A[1],B[1])||cmp(rank(a[0][1]),rank(b[0][1]))||(a[1]-b[1]);}).map(x=>x[0]));
   const G=$('groups');G.textContent='';let shown=0;S.shownTrades=[];
-  groups.forEach((list,t)=>{const vis=list.filter(i=>S.filter==='all'||(S.filter==='open'&&!isDone(S.data.checks[i.id]))||(S.filter==='critical'&&i.critical));if(!vis.length)return;shown+=vis.length;
+  groups.forEach((list,t)=>{const vis=list.filter(i=>S.filter==='all'||(S.filter==='open'&&!isDone(S.data.checks[i.id]))||(S.filter==='critical'&&i.critical)||(S.filter==='done'&&isDone(S.data.checks[i.id])));if(!vis.length)return;shown+=vis.length;
     const d=list.filter(i=>isDone(S.data.checks[i.id])).length;
     if(!(t in S.fold))S.fold[t]=d===list.length;          // a trade with every task done starts folded
     const folded=S.fold[t]&&S.qadd!==t;S.shownTrades.push(t);
@@ -299,15 +303,16 @@ function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checkl
       el('span',{class:'arw','aria-hidden':'true',text:'▼'}),el('span',{class:'tname',text:tradeLabel(t,tab)}),el('span',{class:'cnt',text:d+'/'+list.length}));
     const plus=el('button',{class:'tadd',type:'button','aria-label':'Add tasks to '+t+' (this job only)',text:'+',onclick:()=>openQuickAdd(t)});
     G.append(el('section',{class:'tsec'+(folded?' folded':''),'data-trade':t},el('div',{class:'trade'},tgl,plus),S.qadd===t?quickAdd(t):null,box));});
-  {const fa=$('foldAll'),all=S.shownTrades.length&&S.shownTrades.every(t=>S.fold[t]&&S.qadd!==t);fa.hidden=!S.shownTrades.length;fa.textContent=all?'Expand all':'Collapse all';fa.setAttribute('aria-label',all?'Expand all trades':'Collapse all trades');}
+  {const fa=$('foldAll'),all=S.shownTrades.length&&S.shownTrades.every(t=>S.fold[t]&&S.qadd!==t);fa.hidden=!S.shownTrades.length;fa.textContent='';fa.append(document.createTextNode(all?'Expand all':'Collapse all'),el('span',{class:'arw','aria-hidden':'true',text:all?'▼':'▲'}));fa.setAttribute('aria-label',all?'Expand all trades':'Collapse all trades');}
   if(!items.length)G.append(el('div',{class:'note',text:'No items in this checklist yet. Use "+ Add items" to add some.'}));
-  else if(!shown)G.append(el('div',{class:'empty',text:S.filter==='critical'?'No critical items in this checklist.':'Everything in this checklist is done.'}));}
+  else if(!shown)G.append(el('div',{class:'empty',text:S.filter==='critical'?'No critical items in this checklist.':S.filter==='done'?'Nothing is done in this checklist yet.':'Everything in this checklist is done.'}));}
 function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
   const row=el('div',{class:'item'+(i.critical?' isHold':'')+(st==='Done'?' done':'')+(st==='N/A'?' na':'')});
   row.append(el('button',{class:'tick',type:'button','aria-label':st?'Clear':'Mark done','aria-pressed':String(st==='Done'),text:st==='Done'?'✓':(st==='N/A'?'N/A':''),onclick:()=>setCheck(i,st?'Cleared':'Done')}));
   const txt=el('div',{class:'txt'},document.createTextNode(i.text));const tags=el('div',{class:'tags'});
   if(i.critical)tags.append(el('span',{class:'pill hold',text:'CRITICAL'}));if(i.area)tags.append(el('span',{class:'tag',text:i.area}));if(i.src==='j')tags.append(el('span',{class:'tag extra',text:'this job'}));
   if(tags.childNodes.length)txt.append(tags);row.append(txt);
+  if(i.src==='j'&&i.addedBy)row.append(el('div',{class:'added',text:'Added by '+i.addedBy+(i.addedOn?' · '+i.addedOn:'')}));
   if(st)row.append(el('div',{class:'stamp',text:(st==='N/A'?'N/A ':'✓ ')+c.name+' · '+c.at}));
   const ns=(S.data.notes||{})[i.id]||[];
   if(ns.length)row.append(el('div',{class:'notes'},...ns.map(n=>el('div',{class:'nt'},document.createTextNode(n.text),el('small',{text:n.name+' · '+n.at})))));
@@ -390,7 +395,7 @@ function setCheck(i,status){const jobId=S.job.id,k=jobId+'|'+i.id;
       if(here()){S.data.checks[i.id]=prev;saveJob();if(S.list)renderList();}
       if(!/AUTH/.test(x.message))toast('Not saved – tick it again ('+x.message+')');});})();}
 function removeItem(i){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{S.data.items=S.data.items.filter(x=>x.id!==i.id);saveJob();renderList();toast('Removed from this job');}).catch(x=>toast(x.message));}
-document.querySelectorAll('.chip[data-f]').forEach(c=>c.addEventListener('click',()=>{S.filter=c.dataset.f;document.querySelectorAll('.chip[data-f]').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));renderList();}));
+document.querySelectorAll('.chip[data-f]').forEach(c=>c.addEventListener('click',()=>{S.filter=c.dataset.f;if(S.filter==='done')Object.keys(S.fold).forEach(t=>S.fold[t]=false);document.querySelectorAll('.chip[data-f]').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));renderList();}));
 /* Collapse all / Expand all: folds or opens every trade shown in this checklist */
 $('foldAll').addEventListener('click',()=>{const ts=S.shownTrades||[];const fold=!ts.every(t=>S.fold[t]&&S.qadd!==t);
   ts.forEach(t=>S.fold[t]=fold);if(fold)S.qadd=null;$('foldPad').style.height='0px';renderList();

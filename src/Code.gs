@@ -64,6 +64,7 @@ function append_(name, obj) {
 function yes_(v) { return String(v).trim().toUpperCase().startsWith('Y'); }
 function critical_(v) { return /CRIT|HOLD|^Y/i.test(String(v || '').trim()); }
 function fmt_(d) { return d instanceof Date ? Utilities.formatDate(d, TZ, 'MMM d, h:mm a') : String(d || ''); }
+function day_(d) { return d instanceof Date ? Utilities.formatDate(d, TZ, 'MMM d') : ''; }
 function newId_(prefix) { return prefix + Date.now().toString(36).toUpperCase() + Math.floor(Math.random() * 1296).toString(36).toUpperCase(); }
 let inLock_ = false;              // the script lock is taken once per request; nested calls reuse it
 function withLock_(fn) {
@@ -311,7 +312,8 @@ function job_(jobId) {
   extras.filter(r => String(r['Type']).toUpperCase() !== 'HIDE')
     .sort((a, b) => (at(b) - at(a)) || (a._row - b._row))
     .forEach((r, k) => {
-      items.push({ id: String(r['ItemID']), src: 'j', list: Number(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: -1e6 + k });
+      // job-only tasks carry who added them and the day (master-list tasks never do)
+      items.push({ id: String(r['ItemID']), src: 'j', list: Number(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: -1e6 + k, addedBy: String(r['Added By'] || '').trim(), addedOn: day_(r['Added At']) });
     });
   const checks = {};
   rows_('Check Log').forEach(r => {           // later rows win, so this is the current status

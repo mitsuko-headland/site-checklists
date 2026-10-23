@@ -118,4 +118,10 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  ok(sheets['Edit Log'].data.filter(r=>r[1]==='Setup (trade codes)').length===6&&sheets['Trades'].data.length===31,'trade moves run only once');
  const t=A.login('Mark Ellis',sheets['Users'].data[1][4]).token;const d=A.getJob(t,'J1');
  ok(d.trades.find(x=>x.name==='Framing').code==='6101'&&d.trades.length===30,'job data includes the trade codes');}
+// job-only tasks say who added them and the day; master-list tasks don't
+{const t=A.login('Mark Ellis',sheets['Users'].data[1][4]).token;const J=A.createJob(t,'Added-by test','');
+ A.addItems(t,J.id,'job',[{list:3,trade:'Framing',text:'Extra king stud'}]);
+ const d=A.getJob(t,J.id),x=d.items.find(i=>i.text==='Extra king stud'),m=d.items.find(i=>i.src==='m');
+ ok(x.addedBy==='Mark Ellis'&&/^\d\d-\d\d/.test(x.addedOn),'job-only task carries who added it and the day');
+ ok(!('addedBy' in m)&&!('addedOn' in m),'master-list tasks carry no added-by');}
 
