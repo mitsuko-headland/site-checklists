@@ -21,7 +21,7 @@ const ctx={SpreadsheetApp:{getActive:()=>({getSheetByName:n=>sheets[n]||null,ins
  Utilities:{getUuid:()=>crypto.randomUUID(),computeHmacSha256Signature:(p,s)=>[...crypto.createHmac('sha256',s).update(p).digest()],
   base64EncodeWebSafe:x=>Buffer.from(typeof x==='string'?x:Buffer.from(x.map(b=>b&255))).toString('base64').replace(/\+/g,'-').replace(/\//g,'_'),
   base64DecodeWebSafe:s=>[...Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64')],newBlob:b=>({getDataAsString:()=>Buffer.from(b.map(x=>x&255)).toString()}),formatDate:d=>d.toISOString().slice(5,16)}};
-const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup,cleanupReport_,cleanupRun_};')(...Object.values(ctx));
+const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup,cleanupReport_,cleanupRun_,setListHidden};')(...Object.values(ctx));
 const ok=(c,m)=>{if(!c){console.log('FAIL',m);process.exitCode=1}else console.log('ok',m)};
 // login before PINs exist -> rejected, but upgrade runs
 try{A.login('Mark Ellis','1');ok(false,'no pin')}catch(e){console.log('   msg:',e.message);ok(/not recognised/.test(e.message),'no PIN yet -> rejected')}
@@ -183,4 +183,17 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  const R2=sheets['Park Cleanup'].data.map(r=>r.join(' | ')).join('\n');
  ok(R2.startsWith('PARK CLEAN-UP – DONE')&&R2.includes('Kept your task "Mitsuko test task" – Sam ticked or noted it.'),'summary tab rewritten with the result and what was kept');
  ok(res.ticks===2&&res.notes===1&&res.unhidden===1&&res.unedited===1&&res.restored===1&&res.reverted===1,'counts: 2 ticks, 1 note, 1 back, 1 master edit undone, 1 task restored, 1 edit reversed');}
+// admins hide a whole checklist on one job; logged; nothing deleted
+{const ta=A.login('Mark Ellis',sheets['Users'].data[1][4]).token,tj=r3t();
+ const J1=A.createJob(ta,'Hide test',''),J2=A.createJob(ta,'Other hide test','');
+ A.setCheck(tj,J1.id,'t002',5,'Done');
+ try{A.setListHidden(tj,J1.id,2,true);ok(false,'non-admin hide')}catch(e){ok(/Only admins/.test(e.message),'non-admin cannot hide a checklist')}
+ ok(A.setListHidden(ta,J1.id,5,true)===true&&JSON.stringify(A.getJob(ta,J1.id).hiddenLists)==='[5]','admin hides checklist 5 on one job');
+ ok(JSON.stringify(A.getJob(ta,J2.id).hiddenLists)==='[]','other jobs unaffected');
+ ok(A.getJob(ta,J1.id).checks['t002'].status==='Done'&&A.getJob(ta,J1.id).items.some(i=>i.list===5),'ticks and tasks kept while hidden');
+ const n0=sheets['Edit Log'].data.length;A.setListHidden(ta,J1.id,5,true);ok(sheets['Edit Log'].data.length===n0,'hiding twice logs nothing new');
+ ok(sheets['Edit Log'].data.some(r=>r[1]==='Mark Ellis'&&r[2]===J1.id&&r[3]==='Checklist 5'&&r[6]==='Hidden'),'hide is in the Edit Log');
+ A.setListHidden(ta,J1.id,5,false);
+ ok(JSON.stringify(A.getJob(ta,J1.id).hiddenLists)==='[]'&&sheets['Edit Log'].data.some(r=>r[2]===J1.id&&r[3]==='Checklist 5'&&r[6]==='Shown'),'unhide shows it again and is logged');
+ ok(!A.getJob(ta,J1.id).items.some(i=>i.src==='j'&&/^L\d$/.test(i.id)),'hide rows never show as tasks');}
 

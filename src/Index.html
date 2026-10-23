@@ -52,6 +52,15 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
 .walk{display:grid;grid-template-columns:56px 1fr;gap:4px 14px;align-items:center;text-align:left;width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px}
 .walk .n{grid-row:span 3;font-family:var(--display);font-weight:700;font-size:40px;line-height:1;color:var(--accent);text-align:center}
 .walk b{font-family:var(--display);font-size:24px}
+/* checklist card + admin Hide/Unhide button; a hidden checklist is greyed out (admins only ever see it) */
+.walkrow{position:relative}
+.walkrow.admin .walk{padding-right:118px}
+.walkrow .lhide{position:absolute;top:12px;right:12px;min-height:36px;padding:0 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);color:var(--accent);font-weight:600;font-size:14px}
+.walkrow .lhide[data-armed]{background:var(--danger);border-color:var(--danger);color:#fff}
+.walkrow.hiddenlist .walk{background:var(--bg);border-style:dashed}
+.walkrow.hiddenlist .walk .n,.walkrow.hiddenlist .walk b,.walkrow.hiddenlist .walk .meta{color:var(--muted)}
+.walkrow.hiddenlist .walk .bar{opacity:.4}
+.hidtag{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:6px;background:var(--muted);color:var(--surface);font-family:var(--body);font-size:12px;font-weight:600;vertical-align:middle;letter-spacing:.03em}
 .meta{color:var(--muted);font-size:15px;font-variant-numeric:tabular-nums}
 .bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden}
 .bar i{display:block;height:100%;background:var(--done)}
@@ -272,16 +281,33 @@ function openJob(id,noLoad){const j=S.jobs.find(x=>x.id===id);store.set('sc.job'
 /* fresh data from the sheet; ticks still being saved stay as the person left them */
 function gotJob(d){if(!S.job||d.job.id!==S.job.id)return;const pre=d.job.id+'|';
   Object.keys(S.pend).forEach(k=>{if(k.indexOf(pre)===0)d.checks[k.slice(pre.length)]=S.pend[k].val;});
-  S.data=d;S.job=d.job;saveJob();header(d.job.name,d.job.address||'Choose a checklist');renderTrades();if(S.list)renderList();else if(!$('vLists').hidden)renderLists();}
+  S.data=d;S.job=d.job;saveJob();header(d.job.name,d.job.address||'Choose a checklist');renderTrades();
+  if(S.list&&isHidden(S.list)&&!(S.me&&S.me.admin)){S.list=null;renderLists();show('vLists');toast('That checklist has been hidden on this job');return;}
+  if(S.list)renderList();else if(!$('vLists').hidden)renderLists();}
 function loadJob(){const id=S.job.id;return call('getJob',S.token,id).then(gotJob)
   .catch(x=>{if(/AUTH/.test(x.message))return;if(S.job&&S.job.id!==id)return;if(S.data)toast('Could not refresh – '+x.message);else failed(x.message,()=>openJob(id));});}
 function itemsFor(n){return S.data?S.data.items.filter(i=>i.list===n).sort((a,b)=>a.order-b.order):[];}
 function stat(n){const it=itemsFor(n);let done=0,crit=0;it.forEach(i=>{if(isDone(S.data.checks[i.id]))done++;else if(i.critical)crit++;});return{total:it.length,done,crit};}
-function renderLists(){const L=$('listList');L.textContent='';
-  LISTS.forEach(w=>{const s=stat(w.n);const pct=s.total?Math.round(s.done/s.total*100):0;
+function isHidden(n){return !!(S.data&&(S.data.hiddenLists||[]).includes(n));}
+function renderLists(){const L=$('listList');L.textContent='';const admin=!!(S.me&&S.me.admin);
+  LISTS.forEach(w=>{const hid=isHidden(w.n);if(hid&&!admin)return;          // hidden on this job: only admins see it
+    const s=stat(w.n);const pct=s.total?Math.round(s.done/s.total*100):0;
     const meta=el('div',{class:'meta'},document.createTextNode(s.total?(s.done+' of '+s.total+' done  '):'No items yet  '));if(s.crit)meta.append(el('span',{class:'pill hold',text:s.crit+' critical open'}));
     const bar=el('div',{class:'bar'});const fill=el('i');fill.style.width=pct+'%';bar.append(fill);
-    L.append(el('button',{class:'walk',type:'button',onclick:()=>openList(w.n)},el('div',{class:'n',text:String(w.n)}),el('div',{},el('b',{text:w.name}),el('div',{class:'meta',text:w.desc})),meta,bar));});}
+    const title=el('b',{text:w.name});if(hid)title.append(el('span',{class:'hidtag',text:'HIDDEN'}));
+    const card=el('button',{class:'walk',type:'button',onclick:()=>openList(w.n)},el('div',{class:'n',text:String(w.n)}),el('div',{},title,el('div',{class:'meta',text:w.desc})),meta,bar);
+    const row=el('div',{class:'walkrow'+(admin?' admin':'')+(hid?' hiddenlist':'')},card);
+    if(admin)row.append(listHideBtn(w,hid));
+    L.append(row);});}
+/* Hide / Unhide a checklist on this job (admins): first tap arms, second tap within 4 s confirms */
+function listHideBtn(w,hid){const b=el('button',{class:'lhide',type:'button',text:hid?'Unhide':'Hide','aria-label':(hid?'Unhide ':'Hide ')+w.name+' on this job'});
+  b.onclick=()=>{if(!b.dataset.armed){b.dataset.armed='1';b.textContent=hid?'Tap again to unhide':'Tap again to hide';
+      setTimeout(()=>{if(b.isConnected&&!b.disabled){delete b.dataset.armed;b.textContent=hid?'Unhide':'Hide';}},4000);return;}
+    b.disabled=true;const jobId=S.job.id,want=!hid,was=(S.data.hiddenLists||[]).slice();
+    S.data.hiddenLists=want?was.concat(w.n):was.filter(n=>n!==w.n);saveJob();renderLists();
+    call('setListHidden',S.token,jobId,w.n,want).then(()=>toast(w.name+(want?' hidden on this job':' shown again on this job')))
+      .catch(x=>{if(S.job&&S.job.id===jobId&&S.data){S.data.hiddenLists=was;saveJob();if(!$('vLists').hidden)renderLists();}if(!/AUTH/.test(x.message))toast('Not saved – '+x.message);});};
+  return b;}
 function openList(n){S.list=n;S.filter='all';$('addPanel').hidden=true;S.fold=Object.create(null);S.qadd=null;S.noteFor=null;$('foldPad').style.height='0px';
   document.querySelectorAll('.chip[data-f]').forEach(c=>c.setAttribute('aria-pressed',String(c.dataset.f==='all')));renderList();show('vList');}
 

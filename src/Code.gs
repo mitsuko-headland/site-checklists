@@ -7,6 +7,7 @@
  *   Jobs       : JobID | Job Name | Address | Created By | Created At | Active
  *   Job Items  : JobID | ItemID | Type | Checklist | Trade | Area | Critical | Item | Added By | Added At | Removed
  *                Type = Item (task added to one job) | HIDE (master task removed from one job) | EDIT (master task changed for one job)
+ *                       | LIST (whole checklist hidden on one job by an admin; Removed = Y means shown again)
  *   Check Log  : JobID | ItemID | Checklist | Status | Name | Timestamp
  *   Edit Log   : Timestamp | Name | JobID | ItemID | Field | Old Value | New Value   (created automatically)
  *   Notes      : JobID | ItemID | Checklist | Note | Name | Timestamp                 (created automatically)
@@ -484,7 +485,7 @@ function job_(jobId) {
   });
   // Tasks added to this job go at the top of their trade: newest batch first, each batch in the order it was typed.
   const at = r => (r['Added At'] instanceof Date ? r['Added At'].getTime() : 0);
-  extras.filter(r => type(r) !== 'HIDE' && type(r) !== 'EDIT')
+  extras.filter(r => type(r) === 'ITEM' || !['HIDE', 'EDIT', 'LIST'].includes(type(r)))
     .sort((a, b) => (at(b) - at(a)) || (a._row - b._row))
     .forEach((r, k) => {
       // job-only tasks carry who added them and the day (master-list tasks never do)
@@ -508,7 +509,8 @@ function job_(jobId) {
   if (SpreadsheetApp.getActive().getSheetByName('Trades')) {
     rows_('Trades').forEach(r => { const n = String(r['Trade'] || '').trim(); if (n) trades.push({ name: n, code: String(r['Code'] === undefined ? '' : r['Code']).trim() }); });
   }
-  return { job: { id: jobId, name: String(job['Job Name']), address: String(job['Address'] || '') }, items: items, checks: checks, notes: notes, trades: trades };
+  const hiddenLists = [...new Set(extras.filter(r => type(r) === 'LIST').map(r => Number(r['Checklist'])))].filter(n => n >= 1 && n <= CHECKLISTS);
+  return { job: { id: jobId, name: String(job['Job Name']), address: String(job['Address'] || '') }, hiddenLists: hiddenLists, items: items, checks: checks, notes: notes, trades: trades };
 }
 
 /** Anyone signed in: add a note to a task on this job. Notes are a running log (one row each, never changed). */
@@ -608,6 +610,26 @@ function ensureEditLog_() {
   const sh = ss.insertSheet('Edit Log');
   sh.appendRow(['Timestamp', 'Name', 'JobID', 'ItemID', 'Field', 'Old Value', 'New Value']);
   sh.setFrozenRows(1);
+}
+
+/** Admin only: hide (or show again) a whole checklist on ONE job. Non-admins don't see a hidden checklist;
+ *  admins see it greyed out. Nothing is deleted. Logged in Edit Log. */
+function setListHidden(token, jobId, list, hidden) {
+  const u = user_(token);
+  if (!u.admin) throw new Error('Only admins can hide or show checklists.');
+  list = Number(list); jobId = String(jobId);
+  if (!(list >= 1 && list <= CHECKLISTS)) throw new Error('Unknown checklist.');
+  return withLock_(() => {
+    const sh = sheet_('Job Items'), head = head_(sh);
+    const rows = rows_('Job Items').filter(r => String(r['JobID']) === jobId && String(r['Type']).trim().toUpperCase() === 'LIST' && Number(r['Checklist']) === list && !yes_(r['Removed']));
+    const now = new Date();
+    if (hidden && !rows.length) append_('Job Items', { 'JobID': jobId, 'ItemID': 'L' + list, 'Type': 'LIST', 'Checklist': list, 'Added By': u.name, 'Added At': now, 'Removed': '' });
+    else if (!hidden && rows.length) rows.forEach(r => sh.getRange(r._row, head.indexOf('Removed') + 1).setValue('Y'));
+    else return !!hidden;                     // already in that state – nothing to log
+    ensureEditLog_();
+    append_('Edit Log', { 'Timestamp': now, 'Name': u.name, 'JobID': jobId, 'ItemID': 'Checklist ' + list, 'Field': 'Checklist visibility', 'Old Value': hidden ? 'Shown' : 'Hidden', 'New Value': hidden ? 'Hidden' : 'Shown' });
+    return !!hidden;
+  });
 }
 
 /** Removes an item from this job only. Master-list items are hidden for this job, not deleted. */
