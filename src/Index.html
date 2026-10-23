@@ -39,6 +39,8 @@ h1{font-size:30px}
 .note.err{border-color:var(--danger);color:var(--danger)}
 .btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 18px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-weight:600}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary.danger{background:var(--danger);border-color:var(--danger)}
+.rmrow{color:var(--danger);justify-content:center;margin-top:6px}
 .btn[disabled]{opacity:.6}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
 input,select,textarea{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px;min-height:48px;width:100%}
@@ -386,13 +388,16 @@ function openEditor(row,i){if(row.querySelector('.editor'))return;
   const tp=tradePicker(tradeName(i.trade));const area=el('input',{placeholder:'Area (optional)','aria-label':'Area'});area.value=i.area||'';
   const crit=el('input',{type:'checkbox',style:'width:24px;height:24px;min-height:0'});crit.checked=!!i.critical;
   const save=el('button',{class:'btn primary',type:'button',text:'Save'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});
-  const rm=el('button',{class:'link danger',type:'button',text:'Remove from this job'});
-  rm.onclick=()=>{if(rm.dataset.armed){rm.disabled=true;removeItem(i);return;}rm.dataset.armed='1';rm.textContent='Tap again to remove from this job';setTimeout(()=>{if(rm.isConnected&&!rm.disabled){delete rm.dataset.armed;rm.textContent='Remove from this job';}},4000);};
+  // Remove from this job: a checkbox at the bottom (hard to hit by accident); it only acts when Save is tapped
+  const rmBox=el('input',{type:'checkbox',style:'width:24px;height:24px;min-height:0'});
+  const rm=el('label',{class:'row rmrow',style:'gap:8px;font-weight:600'},rmBox,document.createTextNode(' Remove from this job'));
+  rmBox.addEventListener('change',()=>{save.classList.toggle('danger',rmBox.checked);save.textContent=rmBox.checked?'Remove task':'Save';});
   const ed=el('div',{class:'editor'},el('label',{class:'f'},document.createTextNode('Wording – changes this task on this job only'),ta),
     el('div',{class:'grid2'},el('label',{class:'f'},document.createTextNode('Trade'),tp.el),el('label',{class:'f'},document.createTextNode('Area'),area)),
     el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),el('div',{class:'row'},save,cancel),rm);
   cancel.onclick=()=>ed.remove();
-  save.onclick=()=>{const trade=tp.value();if(!ta.value.trim()){toast('The wording cannot be empty');return;}if(!trade){toast('Choose a trade');return;}save.disabled=true;
+  save.onclick=()=>{if(rmBox.checked){save.disabled=true;removeItem(i,()=>save.disabled=false);return;}   // removing ignores any other changes
+    const trade=tp.value();if(!ta.value.trim()){toast('The wording cannot be empty');return;}if(!trade){toast('Choose a trade');return;}save.disabled=true;
     call('editItem',S.token,S.job.id,i.id,i.src,{text:ta.value,trade,area:area.value,critical:crit.checked}).then(n=>{toast(n?'Item updated':'No changes');return loadJob();}).catch(x=>{save.disabled=false;toast(x.message);});};
   row.append(ed);ta.focus();}
 /* Trade drop-down with "+ Add a new trade…" */
@@ -420,7 +425,7 @@ function setCheck(i,status){const jobId=S.job.id,k=jobId+'|'+i.id;
     .catch(x=>{const prev=S.before[k];delete S.pend[k];delete S.before[k];delete S.saving[k];
       if(here()){S.data.checks[i.id]=prev;saveJob();if(S.list)renderList();}
       if(!/AUTH/.test(x.message))toast('Not saved – tick it again ('+x.message+')');});})();}
-function removeItem(i){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{S.data.items=S.data.items.filter(x=>x.id!==i.id);saveJob();renderList();toast('Removed from this job');}).catch(x=>toast(x.message));}
+function removeItem(i,onFail){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{S.data.items=S.data.items.filter(x=>x.id!==i.id);saveJob();renderList();toast('Removed from this job');}).catch(x=>{if(onFail)onFail();toast(x.message);});}
 document.querySelectorAll('.chip[data-f]').forEach(c=>c.addEventListener('click',()=>{S.filter=c.dataset.f;if(S.filter==='done')Object.keys(S.fold).forEach(t=>S.fold[t]=false);document.querySelectorAll('.chip[data-f]').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));renderList();}));
 /* Collapse all / Expand all: folds or opens every trade shown in this checklist */
 $('foldAll').addEventListener('click',()=>{const ts=S.shownTrades||[];const fold=!ts.every(t=>S.fold[t]&&S.qadd!==t);
