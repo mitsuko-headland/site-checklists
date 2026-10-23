@@ -61,6 +61,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
 .chips{display:flex;gap:8px;flex-wrap:wrap}
 .chip{min-height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:15px}
 .chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.chip.fold-all{border-style:dashed}
 .tsec{margin-top:18px}
 .trade{position:sticky;top:var(--hdr,60px);z-index:3;background:var(--band);color:var(--band-ink);border-radius:10px 10px 0 0;display:flex;align-items:stretch;font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:.05em;text-transform:uppercase}
 .tsec.folded .trade{border-radius:10px}
@@ -159,6 +160,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
       <button class="chip" type="button" data-f="all" aria-pressed="true">All</button>
       <button class="chip" type="button" data-f="open" aria-pressed="false">Still to do</button>
       <button class="chip" type="button" data-f="critical" aria-pressed="false">Critical items</button>
+      <button class="chip fold-all" type="button" id="foldAll">Collapse all</button>
     </div>
     <div id="groups"></div>
     <div class="row">
@@ -277,7 +279,7 @@ function renderLists(){const L=$('listList');L.textContent='';
     const bar=el('div',{class:'bar'});const fill=el('i');fill.style.width=pct+'%';bar.append(fill);
     L.append(el('button',{class:'walk',type:'button',onclick:()=>openList(w.n)},el('div',{class:'n',text:String(w.n)}),el('div',{},el('b',{text:w.name}),el('div',{class:'meta',text:w.desc})),meta,bar));});}
 function openList(n){S.list=n;S.filter='all';$('addPanel').hidden=true;S.fold=Object.create(null);S.qadd=null;S.noteFor=null;$('foldPad').style.height='0px';
-  document.querySelectorAll('.chip').forEach(c=>c.setAttribute('aria-pressed',String(c.dataset.f==='all')));renderList();show('vList');}
+  document.querySelectorAll('.chip[data-f]').forEach(c=>c.setAttribute('aria-pressed',String(c.dataset.f==='all')));renderList();show('vList');}
 
 /* ---------- checklist ---------- */
 function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checklist '+w.n+' – '+w.name;
@@ -287,16 +289,17 @@ function renderList(){const w=LISTS[S.list-1];$('listTitle').textContent='Checkl
   const tab=tradeTab(),cmp=(x,y)=>x===y?0:(x<y?-1:1);   // lowest code first; same code keeps the Trades tab order; no code goes last in master-list order
   const tk=t=>{const x=tab.get(tkey(t));return x&&x.code?[codeNum(x.code),x.k]:[Infinity,Infinity];};
   const groups=new Map([...g0].map((e,k)=>[e,k]).sort((a,b)=>{const A=tk(a[0][0]),B=tk(b[0][0]);return cmp(A[0],B[0])||cmp(A[1],B[1])||cmp(rank(a[0][1]),rank(b[0][1]))||(a[1]-b[1]);}).map(x=>x[0]));
-  const G=$('groups');G.textContent='';let shown=0;
+  const G=$('groups');G.textContent='';let shown=0;S.shownTrades=[];
   groups.forEach((list,t)=>{const vis=list.filter(i=>S.filter==='all'||(S.filter==='open'&&!isDone(S.data.checks[i.id]))||(S.filter==='critical'&&i.critical));if(!vis.length)return;shown+=vis.length;
     const d=list.filter(i=>isDone(S.data.checks[i.id])).length;
     if(!(t in S.fold))S.fold[t]=d===list.length;          // a trade with every task done starts folded
-    const folded=S.fold[t]&&S.qadd!==t;
+    const folded=S.fold[t]&&S.qadd!==t;S.shownTrades.push(t);
     const box=el('div',{class:'items'});vis.forEach(i=>box.append(itemRow(i)));
     const tgl=el('button',{class:'tgl',type:'button','aria-expanded':String(!folded),onclick:e=>{const y=e.currentTarget.getBoundingClientRect().top;S.fold[t]=!folded;if(S.fold[t]&&S.qadd===t)S.qadd=null;renderList();keepHeading(t,y);}},
       el('span',{class:'arw','aria-hidden':'true',text:'▼'}),el('span',{class:'tname',text:tradeLabel(t,tab)}),el('span',{class:'cnt',text:d+'/'+list.length}));
     const plus=el('button',{class:'tadd',type:'button','aria-label':'Add tasks to '+t+' (this job only)',text:'+',onclick:()=>openQuickAdd(t)});
     G.append(el('section',{class:'tsec'+(folded?' folded':''),'data-trade':t},el('div',{class:'trade'},tgl,plus),S.qadd===t?quickAdd(t):null,box));});
+  {const fa=$('foldAll'),all=S.shownTrades.length&&S.shownTrades.every(t=>S.fold[t]&&S.qadd!==t);fa.hidden=!S.shownTrades.length;fa.textContent=all?'Expand all':'Collapse all';fa.setAttribute('aria-label',all?'Expand all trades':'Collapse all trades');}
   if(!items.length)G.append(el('div',{class:'note',text:'No items in this checklist yet. Use "+ Add items" to add some.'}));
   else if(!shown)G.append(el('div',{class:'empty',text:S.filter==='critical'?'No critical items in this checklist.':'Everything in this checklist is done.'}));}
 function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
@@ -387,7 +390,11 @@ function setCheck(i,status){const jobId=S.job.id,k=jobId+'|'+i.id;
       if(here()){S.data.checks[i.id]=prev;saveJob();if(S.list)renderList();}
       if(!/AUTH/.test(x.message))toast('Not saved – tick it again ('+x.message+')');});})();}
 function removeItem(i){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{S.data.items=S.data.items.filter(x=>x.id!==i.id);saveJob();renderList();toast('Removed from this job');}).catch(x=>toast(x.message));}
-document.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{S.filter=c.dataset.f;document.querySelectorAll('.chip').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));renderList();}));
+document.querySelectorAll('.chip[data-f]').forEach(c=>c.addEventListener('click',()=>{S.filter=c.dataset.f;document.querySelectorAll('.chip[data-f]').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));renderList();}));
+/* Collapse all / Expand all: folds or opens every trade shown in this checklist */
+$('foldAll').addEventListener('click',()=>{const ts=S.shownTrades||[];const fold=!ts.every(t=>S.fold[t]&&S.qadd!==t);
+  ts.forEach(t=>S.fold[t]=fold);if(fold)S.qadd=null;$('foldPad').style.height='0px';renderList();
+  const top=$('summary').getBoundingClientRect().top;if(top<0)window.scrollTo(0,window.scrollY+top-document.querySelector('header.top').getBoundingClientRect().height-8);});
 /* keep trade headings pinned just under the app header, whatever its height */
 function setHdr(){document.documentElement.style.setProperty('--hdr',document.querySelector('header.top').getBoundingClientRect().height+'px');}
 window.addEventListener('resize',setHdr);setHdr();
