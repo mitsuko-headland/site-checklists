@@ -88,7 +88,7 @@ function withLock_(fn) {
 function setup() { CacheService.getScriptCache().remove('schema'); upgrade_(); return 'Sheet is up to date.'; }
 function upgrade_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('schema') === '6') return;
+  if (cache.get('schema') === '7') return;
   withLock_(() => {
     const ss = SpreadsheetApp.getActive();
     // Users
@@ -142,11 +142,12 @@ function upgrade_() {
     if (!props.getProperty('PARK_CLEAN_V1')) { props.setProperty('PARK_CLEAN_V1', 'started');
       try { cleanupRun_(ss, 'Park', 'Mitsuko', 'Park Cleanup'); props.setProperty('PARK_CLEAN_V1', 'done'); } catch (e) { props.setProperty('PARK_CLEAN_V1', 'error: ' + e.message); }
       props.setProperty('PARK_REPORT_V1', 'done'); }
+    if (!props.getProperty('RESTORE_T112_V1')) { try { restoreHidden_(ss, 'JMVICS4598Q', 't112', 'Mitsuko'); } catch (e) { } props.setProperty('RESTORE_T112_V1', 'done'); }
     if (!props.getProperty('PARK_REPORT_V1')) { try { cleanupReport_(ss, 'Park', 'Mitsuko', 'Park Cleanup'); } catch (e) { /* report is optional */ } props.setProperty('PARK_REPORT_V1', 'done'); }
     if (itemsUpgraded || props.getProperty('SETUP_TEXT') !== SETUP_TEXT_VERSION) {
       try { writeSetupTab_(ss); props.setProperty('SETUP_TEXT', SETUP_TEXT_VERSION); } catch (e) { /* instructions tab is optional */ }
     }
-    cache.put('schema', '6', 21600);
+    cache.put('schema', '7', 21600);
   });
 }
 /* Trade codes: creates the Trades tab, then (once) moves items off retired trades.
@@ -351,6 +352,21 @@ function cleanupRun_(ss, jobName, person, tabName) {
     'Every deleted row was copied to the "' + backupName + '" tab first.'].concat(kept.length ? kept : ['Nothing of yours had to be kept.']);
   cleanupReport_(ss, jobName, person, tabName, pre);
   return counts;
+}
+/* One-time fix (owner request 2026-10-23): put back a master task removed from one job by mistake.
+ * Deletes that person's HIDE row for the task on that job and logs the restore. Reads the sheet directly. */
+function restoreHidden_(ss, jobId, itemId, person) {
+  const sh = ss.getSheetByName('Job Items');
+  if (!sh || sh.getLastRow() < 2) return 0;
+  const v = sh.getDataRange().getValues(), hd = v[0].map(x => String(x).trim());
+  const c = n => hd.indexOf(n);
+  let n = 0;
+  for (let i = v.length - 1; i >= 1; i--) {
+    const r = v[i];
+    if (String(r[c('JobID')]) === jobId && String(r[c('ItemID')]) === itemId && String(r[c('Type')]).trim().toUpperCase() === 'HIDE' && String(r[c('Added By')]).trim().toLowerCase() === person.toLowerCase()) { sh.deleteRow(i + 1); n++; }
+  }
+  if (n) { ensureEditLog_(); append_('Edit Log', { 'Timestamp': new Date(), 'Name': 'Claude (asked by ' + person + ')', 'JobID': jobId, 'ItemID': itemId, 'Field': 'Restored to job', 'Old Value': 'Removed', 'New Value': 'Back on this job' }); }
+  return n;
 }
 function writeSetupTab_(ss) {
   const s = ss.getSheetByName('Setup');

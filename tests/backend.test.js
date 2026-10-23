@@ -21,7 +21,7 @@ const ctx={SpreadsheetApp:{getActive:()=>({getSheetByName:n=>sheets[n]||null,ins
  Utilities:{getUuid:()=>crypto.randomUUID(),computeHmacSha256Signature:(p,s)=>[...crypto.createHmac('sha256',s).update(p).digest()],
   base64EncodeWebSafe:x=>Buffer.from(typeof x==='string'?x:Buffer.from(x.map(b=>b&255))).toString('base64').replace(/\+/g,'-').replace(/\//g,'_'),
   base64DecodeWebSafe:s=>[...Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64')],newBlob:b=>({getDataAsString:()=>Buffer.from(b.map(x=>x&255)).toString()}),formatDate:d=>d.toISOString().slice(5,16)}};
-const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup,cleanupReport_,cleanupRun_,setListHidden};')(...Object.values(ctx));
+const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup,cleanupReport_,cleanupRun_,setListHidden,restoreHidden_};')(...Object.values(ctx));
 const ok=(c,m)=>{if(!c){console.log('FAIL',m);process.exitCode=1}else console.log('ok',m)};
 // login before PINs exist -> rejected, but upgrade runs
 try{A.login('Mark Ellis','1');ok(false,'no pin')}catch(e){console.log('   msg:',e.message);ok(/not recognised/.test(e.message),'no PIN yet -> rejected')}
@@ -196,4 +196,12 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  A.setListHidden(ta,J1.id,5,false);
  ok(JSON.stringify(A.getJob(ta,J1.id).hiddenLists)==='[]'&&sheets['Edit Log'].data.some(r=>r[2]===J1.id&&r[3]==='Checklist 5'&&r[6]==='Shown'),'unhide shows it again and is logged');
  ok(!A.getJob(ta,J1.id).items.some(i=>i.src==='j'&&/^L\d$/.test(i.id)),'hide rows never show as tasks');}
+// one-time restore of a task removed by mistake: only that HIDE row goes
+{const ta=A.login('Mark Ellis',sheets['Users'].data[1][4]).token,tmk=A.login('Mitsuko','1111').token;
+ const J=A.createJob(ta,'Restore test',''),K=A.createJob(ta,'Keep hidden','');
+ A.removeItem(tmk,J.id,'t002','m',5);A.removeItem(tmk,K.id,'t002','m',5);
+ ok(!A.getJob(ta,J.id).items.some(i=>i.id==='t002'),'task removed before the fix');
+ ok(A.restoreHidden_(ctx.SpreadsheetApp.getActive(),J.id,'t002','Mitsuko')===1,'one HIDE row deleted');
+ ok(A.getJob(ta,J.id).items.some(i=>i.id==='t002')&&!A.getJob(ta,K.id).items.some(i=>i.id==='t002'),'task back on that job only');
+ ok(sheets['Edit Log'].data.some(r=>r[2]===J.id&&r[3]==='t002'&&r[4]==='Restored to job'),'restore is logged');}
 
