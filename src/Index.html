@@ -336,7 +336,7 @@ function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
   const row=el('div',{class:'item'+(i.critical?' isHold':'')+(st==='Done'?' done':'')+(st==='N/A'?' na':'')});
   row.append(el('button',{class:'tick',type:'button','aria-label':st?'Clear':'Mark done','aria-pressed':String(st==='Done'),text:st==='Done'?'✓':(st==='N/A'?'N/A':''),onclick:()=>setCheck(i,st?'Cleared':'Done')}));
   const txt=el('div',{class:'txt'},document.createTextNode(i.text));const tags=el('div',{class:'tags'});
-  if(i.critical)tags.append(el('span',{class:'pill hold',text:'CRITICAL'}));if(i.area)tags.append(el('span',{class:'tag',text:i.area}));if(i.src==='j')tags.append(el('span',{class:'tag extra',text:'this job'}));if(i.edited)tags.append(el('span',{class:'tag extra',text:'edited for this job'}));
+  if(i.critical)tags.append(el('span',{class:'pill hold',text:'CRITICAL'}));if(i.area)tags.append(el('span',{class:'tag',text:i.area}));if(i.src==='j'&&S.me&&S.me.admin)tags.append(el('span',{class:'tag extra',text:'this job'}));   // admins onlyif(i.edited)tags.append(el('span',{class:'tag extra',text:'edited for this job'}));
   if(tags.childNodes.length)txt.append(tags);row.append(txt);
   if(i.src==='j'&&i.addedBy)row.append(el('div',{class:'added',text:'Added by '+i.addedBy+(i.addedOn?' · '+i.addedOn:'')}));
   if(st)row.append(el('div',{class:'stamp',text:(st==='N/A'?'N/A ':'✓ ')+c.name+' · '+c.at}));
