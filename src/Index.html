@@ -384,11 +384,11 @@ function quickAdd(t){const dr=S.qaddDraft;const admin=!!(S.me&&S.me.admin);
   const crit=el('input',{type:'checkbox',style:'width:24px;height:24px;min-height:0'});crit.checked=dr.crit;crit.addEventListener('change',()=>dr.crit=crit.checked);
   const scope=el('select',{'aria-label':'Add to'},el('option',{value:'job',text:'This job only'}),el('option',{value:'all',text:'All jobs (master list – admins)'}));
   scope.options[1].disabled=!admin;scope.value=admin?dr.scope:'job';scope.addEventListener('change',()=>dr.scope=scope.value);
-  const save=el('button',{class:'btn primary',type:'button',text:'Add tasks'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});save.disabled=dr.busy;
+  const save=el('button',{class:'btn primary',type:'button',text:dr.busy?'Adding…':'Add tasks'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});save.disabled=dr.busy;
   cancel.onclick=()=>{S.qadd=null;renderList();};
-  save.onclick=()=>{const lines=ta.value.split('\n').map(x=>x.trim()).filter(Boolean);if(!lines.length){toast('Type at least one task');return;}
+  save.onclick=()=>{if(dr.busy)return;const lines=ta.value.split('\n').map(x=>x.trim()).filter(Boolean);if(!lines.length){toast('Type at least one task');return;}
     const trade=tp.value();if(!trade){toast('Choose a trade');return;}const where=scope.value==='all'&&admin?'all':'job';
-    dr.busy=true;save.disabled=true;
+    dr.busy=true;save.disabled=true;save.textContent='Adding…';
     call('addItems',S.token,S.job.id,where,lines.map(text=>({list:S.list,trade:trade,area:area.value.trim(),critical:crit.checked,text})))
       .then(n=>{S.qadd=null;toast(n+' task'+(n>1?'s':'')+' added '+(where==='all'?'to the master list (every job)':'to this job'));return loadJob();})
       .catch(x=>{dr.busy=false;if(S.list)renderList();toast(x.message);});};
@@ -460,10 +460,16 @@ setInterval(()=>{if(S.list&&S.data&&!document.hidden&&!Object.keys(S.saving).len
 let addPicker=null;
 function renderTrades(){if(addPicker&&!$('addPanel').hidden)return;const box=$('aTradeBox');const cur=addPicker?addPicker.value():'';addPicker=tradePicker(cur||defaultTrade());box.textContent='';box.append(addPicker.el);}
 function defaultTrade(){const c={};itemsFor(S.list||0).forEach(i=>{const t=tradeName(i.trade);c[t]=(c[t]||0)+1;});return Object.keys(c).sort((a,b)=>c[b]-c[a])[0]||'';}
-function add(rows){return call('addItems',S.token,S.job.id,$('aScope').value,rows).then(n=>{toast(n+' item'+(n>1?'s':'')+' added');return loadJob();}).catch(x=>toast(x.message));}
+/* "+ Add items": one save at a time (button shows "Adding…"); on success the form closes, clears and resets to
+   "This job only"; on failure it stays open with the tasks still typed. */
+let adding=false;
+function closeAdd(){$('aText').value='';$('aArea').value='';$('aCrit').checked=false;$('aScope').value='job';$('addPanel').hidden=true;addPicker=null;}
+function add(rows){if(adding)return Promise.resolve(false);adding=true;const b=$('aSave');b.disabled=true;b.textContent='Adding…';const scope=$('aScope').value;
+  return call('addItems',S.token,S.job.id,scope,rows).then(n=>{toast(n+' item'+(n>1?'s':'')+' added '+(scope==='all'?'to the master list (every job)':'to this job'));closeAdd();loadJob();return true;})
+    .catch(x=>{toast(x.message);return false;}).finally(()=>{adding=false;b.disabled=false;b.textContent='Add items';});}
 $('aSave').addEventListener('click',()=>{const lines=$('aText').value.split('\n').map(s=>s.trim()).filter(Boolean);const trade=addPicker?addPicker.value():'';
   if(!lines.length){toast('Type at least one item');return;}if(!trade){toast('Choose a trade');return;}
-  add(lines.map(text=>({list:S.list,trade,area:$('aArea').value.trim(),critical:$('aCrit').checked,text}))).then(()=>{$('aText').value='';addPicker=null;renderTrades();});});
+  add(lines.map(text=>({list:S.list,trade,area:$('aArea').value.trim(),critical:$('aCrit').checked,text})));});
 function parseCSV(t){const rows=[];let r=[],f='',q=false;for(let i=0;i<t.length;i++){const ch=t[i];if(q){if(ch==='"'){if(t[i+1]==='"'){f+='"';i++;}else q=false;}else f+=ch;}else if(ch==='"')q=true;else if(ch===','){r.push(f);f='';}else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&t[i+1]==='\n')i++;r.push(f);rows.push(r);r=[];f='';}else f+=ch;}if(f||r.length){r.push(f);rows.push(r);}return rows.filter(x=>x.some(c=>c.trim()));}
 $('aFile').addEventListener('change',e=>{const file=e.target.files[0];if(!file)return;const rd=new FileReader();rd.onload=()=>{const rows=parseCSV(String(rd.result));if(rows.length&&/checklist|walk/i.test(rows[0][0]||''))rows.shift();
   const out=rows.map(r=>({list:parseInt(r[0],10),trade:(r[1]||'').trim(),area:(r[2]||'').trim(),critical:/crit|hold/i.test(r[3]||''),text:(r[4]||'').trim()})).filter(r=>r.list>=1&&r.list<=6&&r.text);
