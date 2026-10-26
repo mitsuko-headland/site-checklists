@@ -110,6 +110,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
 .tags{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
 .tag{font-size:13px;padding:1px 8px;border-radius:6px;background:var(--bg);color:var(--muted);border:1px solid var(--line)}
 .tag.extra{border-style:dashed}
+.tag.global{color:var(--accent);border-color:var(--accent)}
 .stamp{grid-column:2;font-size:14px;color:var(--done);font-weight:600}
 .item.na .stamp{color:var(--na)}
 .side{grid-column:2;display:flex;gap:16px;flex-wrap:wrap}
@@ -378,7 +379,8 @@ function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
   const row=el('div',{class:'item'+(i.critical?' isHold':'')+(st==='Done'?' done':'')+(st==='N/A'?' na':'')});
   row.append(el('button',{class:'tick',type:'button','aria-label':st?'Clear':'Mark done','aria-pressed':String(st==='Done'),text:st==='Done'?'✓':(st==='N/A'?'N/A':''),onclick:()=>setCheck(i,st?'Cleared':'Done')}));
   const txt=el('div',{class:'txt'},document.createTextNode(i.text));const tags=el('div',{class:'tags'});
-  if(i.critical)tags.append(el('span',{class:'pill hold',text:'CRITICAL'}));if(i.area)tags.append(el('span',{class:'tag',text:i.area}));if(i.src==='j'&&S.me&&S.me.admin)tags.append(el('span',{class:'tag extra',text:'this job'}));   // admins onlyif(i.edited)tags.append(el('span',{class:'tag extra',text:'edited for this job'}));
+  if(i.critical)tags.append(el('span',{class:'pill hold',text:'CRITICAL'}));if(i.area)tags.append(el('span',{class:'tag',text:i.area}));if(S.me&&S.me.admin)tags.append(i.src==='j'?el('span',{class:'tag extra',text:'this job'}):el('span',{class:'tag global',text:'global'}));   // admins only
+  if(i.edited)tags.append(el('span',{class:'tag extra',text:'edited for this job'}));
   if(tags.childNodes.length)txt.append(tags);row.append(txt);
   if(i.src==='j'&&i.addedBy)row.append(el('div',{class:'added',text:'Added by '+i.addedBy+(i.addedOn?' · '+i.addedOn:'')}));
   if(st)row.append(el('div',{class:'stamp',text:(st==='N/A'?'N/A ':'✓ ')+c.name+' · '+c.at}));
@@ -450,17 +452,25 @@ function openEditor(row,i){if(S.editor&&S.editor.id===i.id&&S.editor.jobId===S.j
   // Remove from this job: a checkbox at the bottom (hard to hit by accident); it only acts when Save is tapped
   const rmBox=el('input',{type:'checkbox',style:'width:24px;height:24px;min-height:0'});
   const rm=el('label',{class:'row rmrow',style:'gap:8px;font-weight:600'},rmBox,document.createTextNode(' Remove from this job'));
-  rmBox.addEventListener('change',()=>{save.classList.toggle('danger',rmBox.checked);save.textContent=rmBox.checked?'Remove task':'Save';});
-  const ed=el('div',{class:'editor'},el('label',{class:'f'},document.createTextNode('Wording – changes this task on this job only'),ta),
+  // admins, master-list task: "Change on all jobs" (off by default – edits are this job only unless ticked)
+  const allBox=el('input',{type:'checkbox',style:'width:24px;height:24px;min-height:0'});
+  const canAll=!!(S.me&&S.me.admin)&&i.src==='m';
+  const wl=document.createTextNode('Wording – changes this task on this job only');
+  const label=()=>{save.classList.toggle('danger',rmBox.checked);save.textContent=rmBox.checked?'Remove task':(allBox.checked?'Save on all jobs':'Save');wl.textContent='Wording – changes this task on '+(allBox.checked&&!rmBox.checked?'ALL jobs':'this job only');};
+  rmBox.addEventListener('change',label);allBox.addEventListener('change',label);
+  const ed=el('div',{class:'editor'},el('label',{class:'f'},wl,ta),
     el('label',{class:'f'},document.createTextNode('Checklist – move this task to another checklist'),lp),
     el('div',{class:'grid2'},el('label',{class:'f'},document.createTextNode('Trade'),tp.el),el('label',{class:'f'},document.createTextNode('Area'),area)),
-    el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),el('div',{class:'row'},save,cancel),rm);
+    el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),
+    canAll?el('label',{class:'row',style:'gap:8px;font-weight:600'},allBox,document.createTextNode(' Change on all jobs (master list)')):null,
+    el('div',{class:'row'},save,cancel),rm);
   cancel.onclick=()=>closeEditor();
   S.editor={id:i.id,jobId:S.job.id,el:ed};
   save.onclick=()=>{if(rmBox.checked){save.disabled=true;removeItem(i,()=>save.disabled=false,()=>closeEditor());return;}   // removing ignores any other changes
     const trade=tp.value();if(!ta.value.trim()){toast('The wording cannot be empty');return;}if(!trade){toast('Choose a trade');return;}save.disabled=true;
     const to=Number(lp.value),moved=to!==i.list;
-    call('editItem',S.token,S.job.id,i.id,i.src,{text:ta.value,trade,area:area.value,critical:crit.checked,list:to}).then(n=>{closeEditor();toast(!n?'No changes':moved?'Moved to '+to+' '+((listOf(to)||{}).name||''):'Item updated');return loadJob();}).catch(x=>{save.disabled=false;toast(x.message);});};
+const glob=canAll&&allBox.checked;
+    call('editItem',S.token,S.job.id,i.id,i.src,{text:ta.value,trade,area:area.value,critical:crit.checked,list:to,global:glob}).then(n=>{closeEditor();toast(!n?'No changes':glob?'Updated on all jobs':moved?'Moved to '+to+' '+((listOf(to)||{}).name||''):'Item updated');return loadJob();}).catch(x=>{save.disabled=false;toast(x.message);});};
   row.append(ed);ta.focus();}
 /* Trade drop-down with "+ Add a new trade…" */
 /* every trade on the Trades tab (in code order) plus any trade already used by an item */

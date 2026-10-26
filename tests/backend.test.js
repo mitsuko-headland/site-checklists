@@ -270,3 +270,19 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  // master task in checklist 0 moved by admin, hidden from crew before
  A.editItem(ta,J.id,'t001','m',{text:ml.text,trade:ml.trade,list:0});ok(!A.getJob(tc,J.id).items.some(i=>i.id==='t001')&&A.getJob(ta,J.id).items.find(i=>i.id==='t001').list===0,'master task moved into 0 is hidden from crew on that job');
  try{A.editItem(tc,J.id,'t001','m',{text:ml.text,trade:ml.trade,list:1});ok(false,'crew out of 0')}catch(x){ok(/Only admins/.test(x.message),'crew cannot move a task out of checklist 0')}}
+// "Change on all jobs" (admins, master-list tasks): Items tab updated; every job's own version replaced and logged
+{const ta=A.login('Mark Ellis',sheets['Users'].data[1][4]).token,tc=r3t();const J=A.createJob(ta,'Global A',''),K=A.createJob(ta,'Global B',''),L=A.createJob(ta,'Global C','');
+ const IH=sheets['Items'].data[0],ix=c=>IH.indexOf(c),row=()=>sheets['Items'].data.find(r=>r[0]==='t002');const m0=A.getJob(ta,J.id).items.find(i=>i.id==='t002');
+ A.editItem(tc,K.id,'t002','m',{text:'B own wording',trade:m0.trade,area:'kitchen',critical:m0.critical});   // job B has its own version
+ ok(A.getJob(ta,K.id).items.find(i=>i.id==='t002').edited,'job B has its own version');
+ try{A.editItem(tc,J.id,'t002','m',{text:'Crew global',trade:m0.trade,global:true});ok(false,'crew global')}catch(e){ok(/Only admins/.test(e.message),'crew cannot change a task on all jobs')}
+ try{const x=A.getJob(ta,J.id).items.find(i=>i.src==='j')||(A.addItems(ta,J.id,'job',[{list:2,trade:'Framing',text:'J only'}]),A.getJob(ta,J.id).items.find(i=>i.text==='J only'));A.editItem(ta,J.id,x.id,'j',{text:'x',trade:'Framing',global:true});ok(false,'job-only global')}catch(e){ok(/master-list/.test(e.message),'job-only tasks cannot be changed on all jobs')}
+ const n=A.editItem(ta,J.id,'t002','m',{text:'New master wording',trade:m0.trade,area:'',critical:true,list:3,global:true});
+ ok(n>=3,'admin changes the task on all jobs');
+ ok(row()[ix('Item')]==='New master wording'&&row()[ix('Critical')]==='CRITICAL'&&Number(row()[ix('Checklist')])===3,'Items tab updated (wording, critical, checklist)');
+ [J,K,L].forEach(j=>{const it=A.getJob(ta,j.id).items.find(i=>i.id==='t002');ok(it.text==='New master wording'&&it.list===3&&!it.edited,'every job shows the new version: '+j.name);});
+ const EL=sheets['Edit Log'].data,eh=c=>EL[0].indexOf(c);
+ ok(EL.some(r=>r[eh('JobID')]===K.id&&r[eh('Field')]==='Job version replaced (all-jobs edit)'&&/B own wording/.test(r[eh('Old Value')])&&/kitchen/.test(r[eh('Old Value')])),'job B\'s replaced version is kept in Edit Log');
+ ok(EL.some(r=>r[eh('JobID')]==='(all jobs)'&&r[eh('Field')]==='Wording'&&r[eh('New Value')]==='New master wording'&&r[eh('Name')]==='Mark Ellis')&&EL.some(r=>r[eh('JobID')]==='(all jobs)'&&r[eh('Field')]==='Checklist'&&r[eh('New Value')]==='3 Pre-Rough In'),'all-jobs changes logged with who');
+ ok(A.editItem(ta,J.id,'t002','m',{text:'New master wording',trade:m0.trade,area:'',critical:true,list:3,global:true})===0,'same values again = no change');
+ ok(A.editItem(ta,J.id,'t002','m',{text:'Local only',trade:m0.trade,area:'',critical:true})===1&&row()[ix('Item')]==='New master wording'&&A.getJob(ta,K.id).items.find(i=>i.id==='t002').text==='New master wording','box not ticked = this job only, master unchanged');}

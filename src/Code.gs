@@ -699,6 +699,7 @@ function editItem(token, jobId, itemId, src, changes) {
   jobId = String(jobId); itemId = String(itemId);
   const next = { 'Item': text, 'Trade': String(changes.trade || 'General').trim(), 'Area': String(changes.area || '').trim(), 'Critical': changes.critical ? 'CRITICAL' : '' };
   const val = (r, f) => f === 'Critical' ? (critical_(r[f]) ? 'CRITICAL' : '') : String(r[f] === undefined ? '' : r[f]).trim();
+  if (changes.global) return editMaster_(u, itemId, src, next, changes);
   return withLock_(() => {
     const sh = sheet_('Job Items');
     const head = head_(sh);
@@ -739,6 +740,42 @@ function editItem(token, jobId, itemId, src, changes) {
     ensureEditLog_();
     fields.forEach(f => append_('Edit Log', { 'Timestamp': now, 'Name': u.name, 'JobID': jobId, 'ItemID': itemId, 'Field': f === 'Item' ? 'Wording' : f, 'Old Value': f === 'Checklist' ? listLbl(fromList) : val(current, f), 'New Value': f === 'Checklist' ? listLbl(toList) : next[f] }));
     return fields.length;
+  });
+}
+/** Admin only, "Change on all jobs" ticked: changes the master task on the Items tab (wording, trade, area, critical,
+ *  checklist). Every job's own version of that task (EDIT row) is replaced: the row is marked Removed and what that job
+ *  had is written to Edit Log first, so nothing is lost. Logged in Edit Log under "(all jobs)". */
+function editMaster_(u, itemId, src, next, changes) {
+  if (!u.admin) throw new Error('Only admins can change a task on all jobs.');
+  if (src !== 'm') throw new Error('Only master-list tasks can be changed on all jobs.');
+  const val = (r, f) => f === 'Critical' ? (critical_(r[f]) ? 'CRITICAL' : '') : String(r[f] === undefined ? '' : r[f]).trim();
+  const listLbl = n => (n >= 0 ? n + ' ' + (LIST_NAMES[n] || '') : '');
+  return withLock_(() => {
+    const ish = sheet_('Items'), ihead = head_(ish);
+    const m = rows_('Items').find(x => String(x['ItemID']) === itemId);
+    if (!m) throw new Error('That item no longer exists.');
+    const fromList = cl_(m['Checklist']);
+    const hasTo = changes.list !== undefined && changes.list !== null && changes.list !== '';
+    const toList = hasTo ? Number(changes.list) : fromList;
+    if (hasTo && !(Number.isInteger(toList) && toList >= 0 && toList <= CHECKLISTS)) throw new Error('Unknown checklist.');
+    const now = new Date();
+    const fields = Object.keys(next).filter(f => val(m, f) !== next[f]);
+    const listMoved = toList !== fromList && toList >= 0;
+    // every job's own version of this task goes; keep a record of each first
+    const jsh = sheet_('Job Items'), jhead = head_(jsh);
+    const own = rows_('Job Items').filter(x => String(x['ItemID']) === itemId && String(x['Type']).trim().toUpperCase() === 'EDIT' && !yes_(x['Removed']));
+    if (!fields.length && !listMoved && !own.length) return 0;
+    ensureEditLog_();
+    own.forEach(r => {
+      const had = [val(r, 'Item'), val(r, 'Trade'), val(r, 'Area'), val(r, 'Critical') || 'not critical', listLbl(cl_(r['Checklist']))].filter(x => x !== '').join(' | ');
+      append_('Edit Log', { 'Timestamp': now, 'Name': u.name, 'JobID': String(r['JobID']), 'ItemID': itemId, 'Field': 'Job version replaced (all-jobs edit)', 'Old Value': had, 'New Value': 'Uses the master list' });
+      jsh.getRange(r._row, jhead.indexOf('Removed') + 1).setValue('Y');
+    });
+    fields.forEach(f => { const col = ihead.indexOf(f); if (col >= 0) ish.getRange(m._row, col + 1).setValue(next[f]); });
+    if (listMoved) ish.getRange(m._row, ihead.indexOf('Checklist') + 1).setValue(toList);
+    fields.forEach(f => append_('Edit Log', { 'Timestamp': now, 'Name': u.name, 'JobID': '(all jobs)', 'ItemID': itemId, 'Field': f === 'Item' ? 'Wording' : f, 'Old Value': val(m, f), 'New Value': next[f] }));
+    if (listMoved) append_('Edit Log', { 'Timestamp': now, 'Name': u.name, 'JobID': '(all jobs)', 'ItemID': itemId, 'Field': 'Checklist', 'Old Value': listLbl(fromList), 'New Value': listLbl(toList) });
+    return fields.length + (listMoved ? 1 : 0) + own.length;
   });
 }
 function ensureEditLog_() {
