@@ -118,7 +118,8 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-weight:600;z-index:20;max-width:calc(100% - 32px)}
 /* ---------- printing (Chrome → Print): the open checklist, as filtered, every trade expanded, each trade on its own page ---------- */
 .phead{display:none}
-@media print{
+</style>
+<style id="pcss" media="print">
   @page{size:letter;margin:.5in}
   :root{--bg:#fff;--surface:#fff;--ink:#000;--muted:#333;--line:#999;--band:#fff;--band-ink:#000;--hold:#000;--hold-ink:#000;--done:#000;--na:#000;--accent:#000;color-scheme:light}
   body{background:#fff;color:#000;font-size:11pt;line-height:1.3}
@@ -142,7 +143,6 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
   .notes .nt{background:none;border:0;border-left:2px solid #999;border-radius:0;padding:1pt 0 1pt 6pt;font-size:10pt}
   .notes .nt small{display:inline;color:#333;font-size:9pt;margin-left:6pt}
   .notes .nt small::before{content:'– '}
-}
 </style>
 </head>
 <body>
@@ -208,6 +208,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
     <div class="row">
       <button class="btn" type="button" id="refreshBtn">Refresh</button>
       <button class="btn" type="button" id="addToggle">+ Add items</button>
+      <button class="btn" type="button" id="printBtn">Print</button>
     </div>
     <div class="panel stack" id="addPanel" hidden>
       <h2>Add items to this checklist</h2>
@@ -484,6 +485,22 @@ function setCheck(i,status){const jobId=S.job.id,k=jobId+'|'+i.id;
 function removeItem(i,onFail,onDone){call('removeItem',S.token,S.job.id,i.id,i.src,i.list).then(()=>{if(onDone)onDone();S.data.items=S.data.items.filter(x=>x.id!==i.id);saveJob();renderList();toast('Removed from this job');}).catch(x=>{if(onFail)onFail();toast(x.message);});}
 document.querySelectorAll('.chip[data-f]').forEach(c=>c.addEventListener('click',()=>{S.filter=c.dataset.f;if(S.filter==='done')Object.keys(S.fold).forEach(t=>S.fold[t]=false);document.querySelectorAll('.chip[data-f]').forEach(x=>x.setAttribute('aria-pressed',String(x===c)));renderList();}));
 /* Collapse all / Expand all: folds or opens every trade shown in this checklist */
+/* Print: Google shows the app in a fixed frame, so Chrome's own Print only gets one screen. This opens the checklist
+   as shown (current filter, every trade expanded, one trade per page) in its own tab and opens Chrome's print window. */
+function printList(){if(!S.data||!hasList())return;
+  const g=$('groups').cloneNode(true);g.querySelectorAll('.editor,.note-box,.qadd,.side,.tadd').forEach(x=>x.remove());g.querySelectorAll('.tsec.folded').forEach(x=>x.classList.remove('folded'));
+  if(!g.querySelector('.tsec')){toast('Nothing to print with this filter');return;}
+  const w=listOf(S.list),title=((S.job&&S.job.name)||'Job')+' – Checklist '+w.n+' '+w.name;
+  const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const css=[...document.querySelectorAll('style')].map(x=>x.textContent).join('\n');
+  const font=document.querySelector('link[rel=stylesheet]');
+  const html='<!DOCTYPE html><html><head><meta charset="utf-8"><title>'+esc(title)+'</title>'+(font?'<link rel="stylesheet" href="'+esc(font.href)+'">':'')+
+    '<style>'+css+'\n@media screen{body{max-width:8in;margin:24px auto;padding:0 24px}.tsec+.tsec{margin-top:36px}}</style></head><body><main class="wrap">'+g.outerHTML+'</main>'+
+    '<scr'+'ipt>window.addEventListener("load",function(){var go=function(){setTimeout(function(){window.print();},250);};(document.fonts&&document.fonts.ready?document.fonts.ready.then(go,go):go());});</scr'+'ipt></body></html>';
+  let url;try{url=URL.createObjectURL(new Blob([html],{type:'text/html'}));}catch(e){toast('Could not make the printout');return;}
+  const win=window.open(url,'_blank');if(!win){toast('Allow pop-ups for this site to print');return;}
+  setTimeout(()=>URL.revokeObjectURL(url),60000);}
+$('printBtn').addEventListener('click',printList);
 $('foldAll').addEventListener('click',()=>{const ts=S.shownTrades||[];const fold=!ts.every(t=>S.fold[t]&&S.qadd!==t);
   ts.forEach(t=>S.fold[t]=fold);if(fold)S.qadd=null;$('foldPad').style.height='0px';renderList();
   const top=$('summary').getBoundingClientRect().top;if(top<0)window.scrollTo(0,window.scrollY+top-document.querySelector('header.top').getBoundingClientRect().height-8);});
