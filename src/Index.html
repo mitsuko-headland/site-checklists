@@ -69,15 +69,20 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
 .pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:13px;font-weight:600}
 .pill.hold{background:var(--hold);color:var(--hold-ink)}
 .summary{display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-variant-numeric:tabular-nums}
-.chips{display:flex;gap:8px;flex-wrap:wrap}
-.chip{min-height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:15px}
+/* filter row: pinned under the app header while scrolling, always one line (scrolls sideways on a very narrow phone) */
+.chips{display:flex;gap:5px;flex-wrap:nowrap;align-items:center;overflow-x:auto;scrollbar-width:none;position:sticky;top:var(--hdr,60px);z-index:4;background:var(--bg);padding:8px 0}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;white-space:nowrap;min-height:34px;padding:0 10px;border-radius:999px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:14px}
 .chip[aria-pressed="true"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 /* Collapse all: plain text at the far right of the filter row, so it doesn't read as a filter */
-.fold-all{margin-left:auto;min-height:40px;padding:0 4px 0 10px;border:0;background:none;color:var(--accent);font-weight:600;font-size:15px;display:inline-flex;align-items:center;gap:6px}
-.fold-all .arw{font-size:11px}
+.fold-all{flex:none;margin-left:auto;min-height:34px;min-width:36px;padding:0 4px 0 8px;border:0;background:none;color:var(--accent);font-weight:600;display:inline-flex;align-items:center;justify-content:center}
+.fold-all .arw{font-size:15px}
+@media (max-width:380px){.chip{padding:0 8px;font-size:13.5px}.fold-all{min-width:30px;padding-left:4px}}
+/* Print is for desktop browsers only */
+@media (max-width:700px),(hover:none) and (pointer:coarse){#printBtn{display:none}}
 .added{grid-column:2;font-size:13px;color:var(--muted)}
 .tsec{margin-top:18px}
-.trade{position:sticky;top:var(--hdr,60px);z-index:3;background:var(--band);color:var(--band-ink);border-radius:10px 10px 0 0;display:flex;align-items:stretch;font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:.05em;text-transform:uppercase}
+.trade{position:sticky;top:calc(var(--hdr,60px) + var(--fh,50px));z-index:3;background:var(--band);color:var(--band-ink);border-radius:10px 10px 0 0;display:flex;align-items:stretch;font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:.05em;text-transform:uppercase}
 .tsec.folded .trade{border-radius:10px}
 .trade .tgl{flex:1;min-width:0;display:flex;align-items:center;gap:10px;background:none;border:0;color:inherit;font:inherit;letter-spacing:inherit;text-transform:inherit;text-align:left;padding:10px 14px;min-height:50px;border-radius:inherit}
 .trade .tname{flex:1;min-width:0;overflow-wrap:anywhere}
@@ -200,7 +205,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
     <div class="chips" role="group" aria-label="Show">
       <button class="chip" type="button" data-f="all" aria-pressed="true">All</button>
       <button class="chip" type="button" data-f="open" aria-pressed="false">Still to do</button>
-      <button class="chip" type="button" data-f="critical" aria-pressed="false">Critical items</button>
+      <button class="chip" type="button" data-f="critical" aria-pressed="false">Critical</button>
       <button class="chip" type="button" data-f="done" aria-pressed="false">Completed</button>
       <button class="fold-all" type="button" id="foldAll">Collapse all</button>
     </div>
@@ -349,7 +354,7 @@ function openList(n){closeEditor();S.list=n;S.filter='all';$('addPanel').hidden=
 function renderList(){const foc=S.editor&&S.editor.el.contains(document.activeElement)?document.activeElement:null;renderList_();
   if(S.editor&&!S.editor.el.isConnected)S.editor=null;   // its task is gone (or filtered out)
   if(foc&&foc.isConnected&&document.activeElement!==foc)foc.focus({preventScroll:true});}
-function renderList_(){const w=listOf(S.list);$('listTitle').textContent='Checklist '+w.n+' – '+w.name;
+function renderList_(){const w=listOf(S.list);requestAnimationFrame(setHdr);$('listTitle').textContent='Checklist '+w.n+' – '+w.name;
   const items=itemsFor(S.list),s=stat(S.list),sum=$('summary');sum.textContent='';sum.append(el('b',{text:s.done+' of '+s.total+' done'}));if(s.crit)sum.append(el('span',{class:'pill hold',text:s.crit+' critical open'}));
   const g0=new Map();items.forEach(i=>{const t=tradeName(i.trade);if(!g0.has(t))g0.set(t,[]);g0.get(t).push(i);});
   const rank=l=>{const m=l.filter(i=>i.src==='m').map(i=>i.order);return m.length?Math.min(...m):Infinity;};   // trades keep their master-list order
@@ -366,7 +371,7 @@ function renderList_(){const w=listOf(S.list);$('listTitle').textContent='Checkl
       el('span',{class:'arw','aria-hidden':'true',text:'▼'}),el('span',{class:'tname',text:tradeLabel(t,tab)}),el('span',{class:'cnt',text:d+'/'+list.length}));
     const plus=el('button',{class:'tadd',type:'button','aria-label':'Add tasks to '+t+' (this job only)',text:'+',onclick:()=>openQuickAdd(t)});
     G.append(el('section',{class:'tsec'+(folded?' folded':''),'data-trade':t},el('div',{class:'phead'},el('b',{text:(S.job&&S.job.name)||''}),document.createTextNode(' · Checklist '+w.n+' – '+w.name+(S.filter!=='all'?' · '+FILTER_NAMES[S.filter]:''))),el('div',{class:'trade'},tgl,plus),S.qadd===t?quickAdd(t):null,box));});
-  {const fa=$('foldAll'),all=S.shownTrades.length&&S.shownTrades.every(t=>S.fold[t]&&S.qadd!==t);fa.hidden=!S.shownTrades.length;fa.textContent='';fa.append(document.createTextNode(all?'Expand all':'Collapse all'),el('span',{class:'arw','aria-hidden':'true',text:all?'▼':'▲'}));fa.setAttribute('aria-label',all?'Expand all trades':'Collapse all trades');}
+  {const fa=$('foldAll'),all=S.shownTrades.length&&S.shownTrades.every(t=>S.fold[t]&&S.qadd!==t);fa.hidden=!S.shownTrades.length;fa.textContent='';fa.append(el('span',{class:'arw','aria-hidden':'true',text:all?'▼':'▲'}));fa.setAttribute('aria-label',all?'Expand all trades':'Collapse all trades');fa.title=all?'Expand all':'Collapse all';}
   if(!items.length)G.append(el('div',{class:'note',text:'No items in this checklist yet. Use "+ Add items" to add some.'}));
   else if(!shown)G.append(el('div',{class:'empty',text:S.filter==='critical'?'No critical items in this checklist.':S.filter==='done'?'Nothing is done in this checklist yet.':'Everything in this checklist is done.'}));}
 function itemRow(i){const c=S.data.checks[i.id],st=c&&c.status;
@@ -405,7 +410,7 @@ function scrollToY(target){const pad=$('foldPad'),max=document.documentElement.s
 function openQuickAdd(t){if(S.qadd!==t){S.qadd=t;S.qaddDraft={text:'',area:'',crit:false,busy:false,trade:t,scope:'job'};}S.fold[t]=false;renderList();
   // put the heading + typing box at the top of the screen so the phone keyboard does not cover it
   const sec=[...document.querySelectorAll('.tsec')].find(x=>x.dataset.trade===t);
-  if(sec)scrollToY(window.scrollY+sec.getBoundingClientRect().top-document.querySelector('header.top').getBoundingClientRect().height);
+  if(sec)scrollToY(window.scrollY+sec.getBoundingClientRect().top-pinH());
   const ta=document.querySelector('.qadd textarea');if(ta)ta.focus({preventScroll:true});}
 /* "+" on a trade heading: the same form as "+ Add items", with the trade filled in (it can still be changed).
    "All jobs (master list)" is for admins only; the default is always "This job only". */
@@ -505,7 +510,9 @@ $('foldAll').addEventListener('click',()=>{const ts=S.shownTrades||[];const fold
   ts.forEach(t=>S.fold[t]=fold);if(fold)S.qadd=null;$('foldPad').style.height='0px';renderList();
   const top=$('summary').getBoundingClientRect().top;if(top<0)window.scrollTo(0,window.scrollY+top-document.querySelector('header.top').getBoundingClientRect().height-8);});
 /* keep trade headings pinned just under the app header, whatever its height */
-function setHdr(){document.documentElement.style.setProperty('--hdr',document.querySelector('header.top').getBoundingClientRect().height+'px');}
+function setHdr(){const r=document.documentElement.style;r.setProperty('--hdr',document.querySelector('header.top').getBoundingClientRect().height+'px');
+  const c=document.querySelector('#vList .chips'),h=c&&c.getBoundingClientRect().height;if(h)r.setProperty('--fh',h+'px');}
+const pinH=()=>document.querySelector('header.top').getBoundingClientRect().height+((document.querySelector('#vList .chips')||{}).offsetHeight||0);
 window.addEventListener('resize',setHdr);setHdr();
 $('addToggle').addEventListener('click',()=>{const p=$('addPanel');p.hidden=!p.hidden;if(!p.hidden){addPicker=null;renderTrades();}});
 $('refreshBtn').addEventListener('click',()=>loadJob().then(()=>toast('Up to date')));
