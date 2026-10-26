@@ -601,7 +601,7 @@ function job_(jobId) {
     if (!id || hidden.has(id) || (String(r['Active']).trim() && !yes_(r['Active']))) return;
     const it = { id: id, src: 'm', list: cl_(r['Checklist']), trade: String(r['Trade'] || 'General'), area: String(r['Area'] || ''), critical: critical_(r['Critical']), text: String(r['Item']), order: Number(r['Order']) || 0 };
     const e = edits[id];
-    if (e) { it.text = String(e['Item']); it.trade = String(e['Trade'] || 'General'); it.area = String(e['Area'] || ''); it.critical = critical_(e['Critical']); it.edited = true; }
+    if (e) { it.text = String(e['Item']); it.trade = String(e['Trade'] || 'General'); it.area = String(e['Area'] || ''); it.critical = critical_(e['Critical']); it.edited = true; if (cl_(e['Checklist']) >= 0) it.list = cl_(e['Checklist']); }
     items.push(it);
   });
   // Tasks added to this job go at the top of their trade: newest batch first, each batch in the order it was typed.
@@ -685,7 +685,9 @@ function addItems(token, jobId, scope, rows) {
   });
 }
 
-/** Anyone signed in: change a task's wording, trade, area or critical flag ON THIS JOB ONLY.
+/** Anyone signed in: change a task's wording, trade, area, critical flag or checklist ON THIS JOB ONLY.
+ *  changes.list (optional) moves the task to another checklist; ticks and notes follow it (they're kept by ItemID).
+ *  Only admins can move a task into or out of checklist 0, and only admins can move one into a checklist hidden on this job.
  *  Job-only tasks are changed in place; a master-list task gets an EDIT row in Job Items for this job,
  *  so other jobs keep the master wording (change the Items tab to change it everywhere).
  *  Every change is written to Edit Log with who and when. */
@@ -701,10 +703,11 @@ function editItem(token, jobId, itemId, src, changes) {
     const sh = sheet_('Job Items');
     const head = head_(sh);
     const jobRows = rows_('Job Items').filter(x => String(x['JobID']) === jobId && !yes_(x['Removed']));
-    let row = null, current = null;
+    let row = null, current = null, master = null;
     if (src === 'm') {
       const m = rows_('Items').find(x => String(x['ItemID']) === itemId);
       if (!m) throw new Error('That item no longer exists.');
+      master = m;
       const ed = jobRows.filter(x => String(x['ItemID']) === itemId && String(x['Type']).trim().toUpperCase() === 'EDIT');
       row = ed.length ? ed[ed.length - 1] : null;
       current = row || m;
@@ -713,17 +716,28 @@ function editItem(token, jobId, itemId, src, changes) {
       if (!row) throw new Error('That item no longer exists.');
       current = row;
     }
-    const fields = Object.keys(next).filter(f => val(current, f) !== next[f]);
+    // checklist: kept as it is unless the form sends a different one
+    const fromList = cl_(current['Checklist']);
+    const hasTo = changes.list !== undefined && changes.list !== null && changes.list !== '';
+    const toList = hasTo ? Number(changes.list) : fromList;
+    if (hasTo && !(Number.isInteger(toList) && toList >= 0 && toList <= CHECKLISTS)) throw new Error('Unknown checklist.');
+    if (toList !== fromList) {
+      if ((toList === ADMIN_LIST || fromList === ADMIN_LIST) && !u.admin) throw new Error('Only admins can move tasks into or out of Project management to do.');
+      const hiddenHere = jobRows.some(x => String(x['Type']).trim().toUpperCase() === 'LIST' && Number(x['Checklist']) === toList);
+      if (hiddenHere && !u.admin) throw new Error('That checklist is hidden on this job.');
+    }
+    if (toList >= 0) next['Checklist'] = toList;
+    const listLbl = n => (n >= 0 ? n + ' ' + (LIST_NAMES[n] || '') : '');
+    const fields = Object.keys(next).filter(f => f === 'Checklist' ? toList !== fromList : val(current, f) !== next[f]);
     if (!fields.length) return 0;
     const now = new Date();
     if (src === 'm' && !row) {
-      const m = rows_('Items').find(x => String(x['ItemID']) === itemId);
-      append_('Job Items', { 'JobID': jobId, 'ItemID': itemId, 'Type': 'EDIT', 'Checklist': Number(m['Checklist']), 'Trade': next['Trade'], 'Area': next['Area'], 'Critical': next['Critical'], 'Item': next['Item'], 'Added By': u.name, 'Added At': now, 'Removed': '' });
+      append_('Job Items', { 'JobID': jobId, 'ItemID': itemId, 'Type': 'EDIT', 'Checklist': toList >= 0 ? toList : master['Checklist'], 'Trade': next['Trade'], 'Area': next['Area'], 'Critical': next['Critical'], 'Item': next['Item'], 'Added By': u.name, 'Added At': now, 'Removed': '' });
     } else {
       fields.forEach(f => { const col = head.indexOf(f); if (col >= 0) sh.getRange(row._row, col + 1).setValue(next[f]); });
     }
     ensureEditLog_();
-    fields.forEach(f => append_('Edit Log', { 'Timestamp': now, 'Name': u.name, 'JobID': jobId, 'ItemID': itemId, 'Field': f === 'Item' ? 'Wording' : f, 'Old Value': val(current, f), 'New Value': next[f] }));
+    fields.forEach(f => append_('Edit Log', { 'Timestamp': now, 'Name': u.name, 'JobID': jobId, 'ItemID': itemId, 'Field': f === 'Item' ? 'Wording' : f, 'Old Value': f === 'Checklist' ? listLbl(fromList) : val(current, f), 'New Value': f === 'Checklist' ? listLbl(toList) : next[f] }));
     return fields.length;
   });
 }

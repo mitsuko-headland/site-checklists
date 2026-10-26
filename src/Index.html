@@ -399,12 +399,17 @@ function quickAdd(t){const dr=S.qaddDraft;const admin=!!(S.me&&S.me.admin);
     el('div',{class:'grid2'},el('label',{class:'f'},document.createTextNode('Trade'),tp.el),el('label',{class:'f'},document.createTextNode('Area'),area)),
     el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),
     el('label',{class:'f'},document.createTextNode('Add to'),scope),el('div',{class:'row'},save,cancel));}
-/* Editor (anyone signed in): wording, trade, area, critical – this job only; master tasks get a per-job EDIT row. */
+/* Editor (anyone signed in): wording, checklist, trade, area, critical – this job only; master tasks get a per-job EDIT row. */
+/* Checklist drop-down: admins see every checklist; others don't get checklist 0 or checklists hidden on this job. */
+function listPicker(cur){const admin=!!(S.me&&S.me.admin);const sel=el('select',{'aria-label':'Checklist'});
+  LISTS.forEach(w=>{if(w.n!==cur&&!admin&&(w.admin||isHidden(w.n)))return;const o=el('option',{value:String(w.n),text:w.n+' '+w.name});if(w.n===cur)o.selected=true;sel.append(o);});
+  return sel;}
 /* The open form is kept in S.editor and re-attached after every redraw (loads, ticks, auto-refresh),
    so it only ever closes on Save / Remove task / Cancel, and keeps everything typed in it. */
 function closeEditor(){if(S.editor){S.editor.el.remove();S.editor=null;}}
 function openEditor(row,i){if(S.editor&&S.editor.id===i.id&&S.editor.jobId===S.job.id)return;closeEditor();
   const ta=el('textarea',{'aria-label':'Item wording'});ta.value=i.text;
+  const lp=listPicker(i.list);
   const tp=tradePicker(tradeName(i.trade));const area=el('input',{placeholder:'Area (optional)','aria-label':'Area'});area.value=i.area||'';
   const crit=el('input',{type:'checkbox',style:'width:24px;height:24px;min-height:0'});crit.checked=!!i.critical;
   const save=el('button',{class:'btn primary',type:'button',text:'Save'}),cancel=el('button',{class:'btn',type:'button',text:'Cancel'});
@@ -413,13 +418,15 @@ function openEditor(row,i){if(S.editor&&S.editor.id===i.id&&S.editor.jobId===S.j
   const rm=el('label',{class:'row rmrow',style:'gap:8px;font-weight:600'},rmBox,document.createTextNode(' Remove from this job'));
   rmBox.addEventListener('change',()=>{save.classList.toggle('danger',rmBox.checked);save.textContent=rmBox.checked?'Remove task':'Save';});
   const ed=el('div',{class:'editor'},el('label',{class:'f'},document.createTextNode('Wording – changes this task on this job only'),ta),
+    el('label',{class:'f'},document.createTextNode('Checklist – move this task to another checklist'),lp),
     el('div',{class:'grid2'},el('label',{class:'f'},document.createTextNode('Trade'),tp.el),el('label',{class:'f'},document.createTextNode('Area'),area)),
     el('label',{class:'row',style:'gap:8px;font-weight:600'},crit,document.createTextNode(' Critical item')),el('div',{class:'row'},save,cancel),rm);
   cancel.onclick=()=>closeEditor();
   S.editor={id:i.id,jobId:S.job.id,el:ed};
   save.onclick=()=>{if(rmBox.checked){save.disabled=true;removeItem(i,()=>save.disabled=false,()=>closeEditor());return;}   // removing ignores any other changes
     const trade=tp.value();if(!ta.value.trim()){toast('The wording cannot be empty');return;}if(!trade){toast('Choose a trade');return;}save.disabled=true;
-    call('editItem',S.token,S.job.id,i.id,i.src,{text:ta.value,trade,area:area.value,critical:crit.checked}).then(n=>{closeEditor();toast(n?'Item updated':'No changes');return loadJob();}).catch(x=>{save.disabled=false;toast(x.message);});};
+    const to=Number(lp.value),moved=to!==i.list;
+    call('editItem',S.token,S.job.id,i.id,i.src,{text:ta.value,trade,area:area.value,critical:crit.checked,list:to}).then(n=>{closeEditor();toast(!n?'No changes':moved?'Moved to '+to+' '+((listOf(to)||{}).name||''):'Item updated');return loadJob();}).catch(x=>{save.disabled=false;toast(x.message);});};
   row.append(ed);ta.focus();}
 /* Trade drop-down with "+ Add a new trade…" */
 /* every trade on the Trades tab (in code order) plus any trade already used by an item */

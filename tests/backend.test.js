@@ -242,3 +242,31 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  sheets['Items'].data.push(['t950','','Framing','','','No checklist number','',999,'Y']);
  ok(!A.getJob(ta,J.id).items.some(i=>i.id==='t950'&&i.list===0),'a blank Checklist cell never lands in checklist 0');}
 
+// move a task to another checklist (Edit form, this job only)
+{const ta=A.login('Mark Ellis',sheets['Users'].data[1][4]).token,tc=r3t();const J=A.createJob(ta,'Move test',''),K=A.createJob(ta,'Other move job','');
+ A.addItems(ta,J.id,'job',[{list:0,trade:'Site Supervisor',text:'Wrong list task'},{list:3,trade:'Framing',text:'Crew job task'}]);
+ let d=A.getJob(ta,J.id);const w=d.items.find(i=>i.text==='Wrong list task'),c=d.items.find(i=>i.text==='Crew job task');
+ A.setCheck(ta,J.id,w.id,0,'Done');A.addNote(ta,J.id,w.id,0,'keep me');
+ ok(A.editItem(ta,J.id,w.id,'j',{text:'Wrong list task',trade:'Site Supervisor',area:'',critical:false,list:2})===1,'admin moves a job-only task out of checklist 0');
+ d=A.getJob(ta,J.id);const w2=d.items.find(i=>i.id===w.id);ok(w2.list===2&&d.checks[w.id].status==='Done'&&d.notes[w.id].length===1,'moved task keeps its tick and notes');
+ ok(A.getJob(tc,J.id).items.some(i=>i.id===w.id&&i.list===2)&&A.getJob(tc,J.id).checks[w.id],'crew now see it in checklist 2');
+ const EL=sheets['Edit Log'].data,eh=EL[0],e=EL.slice(-1)[0];ok(e[eh.indexOf('Field')]==='Checklist'&&e[eh.indexOf('Old Value')]==='0 Project management to do'&&e[eh.indexOf('New Value')]==='2 Demolition'&&e[eh.indexOf('Name')]==='Mark Ellis','Edit Log: Checklist 0 → 2 with names and who');
+ ok(A.editItem(tc,J.id,c.id,'j',{text:'Crew job task',trade:'Framing',area:'',critical:false,list:4})===1&&A.getJob(tc,J.id).items.find(i=>i.id===c.id).list===4,'crew can move a job-only task between checklists');
+ ok(A.editItem(tc,J.id,c.id,'j',{text:'Crew job task',trade:'Framing',area:'',critical:false,list:4})===0,'same checklist = no change');
+ ok(A.editItem(tc,J.id,c.id,'j',{text:'Crew job task',trade:'Framing',area:''})===0,'no checklist sent = stays put');
+ try{A.editItem(tc,J.id,c.id,'j',{text:'Crew job task',trade:'Framing',list:0});ok(false,'crew into 0')}catch(x){ok(/Only admins/.test(x.message),'crew cannot move a task into checklist 0')}
+ try{A.editItem(tc,J.id,c.id,'j',{text:'Crew job task',trade:'Framing',list:9});ok(false,'bad list')}catch(x){ok(/Unknown checklist/.test(x.message),'unknown checklist rejected')}
+ A.setListHidden(ta,J.id,5,true);
+ try{A.editItem(tc,J.id,c.id,'j',{text:'Crew job task',trade:'Framing',list:5});ok(false,'crew into hidden')}catch(x){ok(/hidden/.test(x.message),'crew cannot move into a checklist hidden on this job')}
+ ok(A.editItem(ta,J.id,c.id,'j',{text:'Crew job task',trade:'Framing',list:5})===1,'admin can move into a hidden checklist');A.setListHidden(ta,J.id,5,false);
+ // master task: this job only
+ const before=sheets['Items'].data.find(r=>r[0]==='t001').slice();const ml=A.getJob(ta,J.id).items.find(i=>i.id==='t001');
+ ok(A.editItem(tc,J.id,'t001','m',{text:ml.text,trade:ml.trade,area:ml.area,critical:ml.critical,list:6})===1,'crew move a master task on one job');
+ ok(A.getJob(tc,J.id).items.find(i=>i.id==='t001').list===6&&A.getJob(tc,K.id).items.find(i=>i.id==='t001').list===ml.list,'moved on this job only; other jobs unchanged');
+ ok(JSON.stringify(sheets['Items'].data.find(r=>r[0]==='t001'))===JSON.stringify(before),'master list on Items tab unchanged');
+ ok(A.editItem(tc,J.id,'t001','m',{text:ml.text+' (edited)',trade:ml.trade,area:ml.area,critical:ml.critical})===1&&A.getJob(tc,J.id).items.find(i=>i.id==='t001').list===6,'later wording edit keeps the moved checklist');
+ ok(A.editItem(tc,J.id,'t001','m',{text:ml.text+' (edited)',trade:ml.trade,area:ml.area,critical:ml.critical,list:ml.list})===1&&A.getJob(tc,J.id).items.find(i=>i.id==='t001').list===ml.list,'moved back again');
+ {const H=sheets['Job Items'].data[0],x=c=>H.indexOf(c);ok(sheets['Job Items'].data.filter(r=>r[x('Type')]==='EDIT'&&r[x('ItemID')]==='t001'&&r[x('JobID')]===J.id).length===1,'still one EDIT row per job + task');}
+ // master task in checklist 0 moved by admin, hidden from crew before
+ A.editItem(ta,J.id,'t001','m',{text:ml.text,trade:ml.trade,list:0});ok(!A.getJob(tc,J.id).items.some(i=>i.id==='t001')&&A.getJob(ta,J.id).items.find(i=>i.id==='t001').list===0,'master task moved into 0 is hidden from crew on that job');
+ try{A.editItem(tc,J.id,'t001','m',{text:ml.text,trade:ml.trade,list:1});ok(false,'crew out of 0')}catch(x){ok(/Only admins/.test(x.message),'crew cannot move a task out of checklist 0')}}
