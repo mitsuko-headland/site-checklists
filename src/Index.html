@@ -230,7 +230,7 @@ label.f{display:flex;flex-direction:column;gap:6px;font-weight:600;font-size:15p
       <button class="btn primary" type="button" id="aSave">Add items</button>
       <details>
         <summary><b>Upload a CSV file instead</b></summary>
-        <p class="meta">Columns: <b>Checklist, Trade, Area, Critical, Item</b> (Checklist = 1–6, Critical = CRITICAL or blank). Save from Excel or Google Sheets as CSV. Items go where "Add to" is set above.</p>
+        <p class="meta">Columns: <b>Checklist, Trade, Area, Critical, Item</b> (Checklist = 1–7, Critical = CRITICAL or blank). Save from Excel or Google Sheets as CSV. Items go where "Add to" is set above.</p>
         <input type="file" id="aFile" accept=".csv,text/csv">
       </details>
     </div>
@@ -246,10 +246,11 @@ const LISTS=[
  {n:0,name:'Project management to do',desc:'Admin-only to-dos for running the project',admin:true},   // admins only, on every job
  {n:1,name:'Project Startup & Site Protection',desc:'Signage, site setup and protecting areas outside the scope'},
  {n:2,name:'Demolition',desc:'Demolition and removal'},
- {n:3,name:'Pre-Rough In',desc:'Planning & layout before trades rough in'},
- {n:4,name:'Rough In & Pre-Drywall',desc:'Framing, backing, fire blocking, rough-ins, final check before boarding'},
- {n:5,name:'Drywall',desc:'Boarding, mudding, priming'},
- {n:6,name:'Finishing',desc:'Paint, flooring, tile, millwork, fixtures, doors'}];
+ {n:3,name:'Groundwork & Slab Prep',desc:'Excavation, drainage, under-slab services, slab prep'},
+ {n:4,name:'Prep: Framing & Trades Rough In',desc:'Planning & layout before trades rough in'},
+ {n:5,name:'Pre-Drywall Review: Framing & Trades Rough In',desc:'Framing, backing, fire blocking, rough-ins, final check before boarding'},
+ {n:6,name:'Drywall',desc:'Boarding, mudding, priming'},
+ {n:7,name:'Finishing',desc:'Paint, flooring, tile, millwork, fixtures, doors'}];
 const $=id=>document.getElementById(id);
 const el=(tag,props,...kids)=>{const e=document.createElement(tag);if(props)for(const k in props){if(k==='class')e.className=props[k];else if(k==='text')e.textContent=props[k];else if(k.startsWith('on'))e.addEventListener(k.slice(2),props[k]);else e.setAttribute(k,props[k]);}for(const c of kids)if(c!=null)e.append(c);return e;};
 const store={get(k){try{return localStorage.getItem(k);}catch(e){return null;}},set(k,v){try{localStorage.setItem(k,v);}catch(e){}},del(k){try{localStorage.removeItem(k);}catch(e){}}};
@@ -258,6 +259,7 @@ const S={token:store.get('sc.token'),me:null,jobs:[],job:null,data:null,list:nul
 const saved={get(k){try{return JSON.parse(store.get('sc.c.'+k)||'null');}catch(e){return null;}},set(k,v){try{store.set('sc.c.'+k,JSON.stringify(v));}catch(e){}},
   clear(){try{Object.keys(localStorage).filter(k=>k.indexOf('sc.c.')===0).forEach(k=>localStorage.removeItem(k));}catch(e){}},
   job(id,d){const ids=(saved.get('jobids')||[]).filter(x=>x!==id);ids.unshift(id);ids.slice(5).forEach(x=>store.del('sc.c.job.'+x));saved.set('jobids',ids.slice(0,5));saved.set('job.'+id,d);}};
+if(store.get('sc.v')!=='7'){saved.clear();store.set('sc.v','7');}   // checklists renumbered 2026-10-28: drop copies saved with the old numbers
 function saveJob(){clearTimeout(saveJob.t);saveJob.t=setTimeout(()=>{if(S.job&&S.data&&S.data.job&&S.data.job.id===S.job.id)saved.job(S.job.id,S.data);},600);}
 function nowStamp(){try{return new Date().toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit',timeZone:'America/Vancouver'});}catch(e){return 'just now';}}
 let retryFn=null;let pendingJob=JOB_PARAM;
@@ -544,7 +546,7 @@ $('aSave').addEventListener('click',()=>{const lines=$('aText').value.split('\n'
   add(lines.map(text=>({list:S.list,trade,area:$('aArea').value.trim(),critical:$('aCrit').checked,text})));});
 function parseCSV(t){const rows=[];let r=[],f='',q=false;for(let i=0;i<t.length;i++){const ch=t[i];if(q){if(ch==='"'){if(t[i+1]==='"'){f+='"';i++;}else q=false;}else f+=ch;}else if(ch==='"')q=true;else if(ch===','){r.push(f);f='';}else if(ch==='\n'||ch==='\r'){if(ch==='\r'&&t[i+1]==='\n')i++;r.push(f);rows.push(r);r=[];f='';}else f+=ch;}if(f||r.length){r.push(f);rows.push(r);}return rows.filter(x=>x.some(c=>c.trim()));}
 $('aFile').addEventListener('change',e=>{const file=e.target.files[0];if(!file)return;const rd=new FileReader();rd.onload=()=>{const rows=parseCSV(String(rd.result));if(rows.length&&/checklist|walk/i.test(rows[0][0]||''))rows.shift();
-  const out=rows.map(r=>({list:parseInt(r[0],10),trade:(r[1]||'').trim(),area:(r[2]||'').trim(),critical:/crit|hold/i.test(r[3]||''),text:(r[4]||'').trim()})).filter(r=>r.list>=(S.me&&S.me.admin?0:1)&&r.list<=6&&r.text);
+  const out=rows.map(r=>({list:parseInt(r[0],10),trade:(r[1]||'').trim(),area:(r[2]||'').trim(),critical:/crit|hold/i.test(r[3]||''),text:(r[4]||'').trim()})).filter(r=>r.list>=(S.me&&S.me.admin?0:1)&&r.list<=7&&r.text);
   if(!out.length){toast('No valid rows found – check the columns');return;}add(out);e.target.value='';};rd.readAsText(file);});
 
 $('copyLink').addEventListener('click',()=>{const v=$('jobLink').value;const done=()=>toast('Job link copied');

@@ -19,11 +19,12 @@ const TZ = 'America/Vancouver';
 const SESSION_DAYS = 30;
 const MAX_FAILS = 5;            // wrong PINs allowed per name …
 const LOCK_MINUTES = 15;        // … before that name is locked for this long
-const CHECKLISTS = 6;           // 1 Project Startup & Site Protection … 6 Finishing
+const CHECKLISTS = 7;           // 1 Project Startup & Site Protection … 7 Finishing
 const ADMIN_LIST = 0;            // checklist 0 – Project management to do – admins only
-const LIST_NAMES = ['Project management to do', 'Project Startup & Site Protection', 'Demolition', 'Pre-Rough In', 'Rough In & Pre-Drywall', 'Drywall', 'Finishing'];
+const LIST_NAMES = ['Project management to do', 'Project Startup & Site Protection', 'Demolition', 'Groundwork & Slab Prep',
+  'Prep: Framing & Trades Rough In', 'Pre-Drywall Review: Framing & Trades Rough In', 'Drywall', 'Finishing'];
 const LABEL_TABS = ['Job Items', 'Check Log', 'Notes', 'Edit Log'];   // tabs that get readable Job Name + Task columns
-const SETUP_TEXT_VERSION = '8';
+const SETUP_TEXT_VERSION = '9';
 const NOTE_MAX = 2000;          // longest note accepted, in characters  // bump to rewrite the Setup tab after instructions change
 /* Trade codes (from Headland's divisions list). Seeds the Trades tab the first time; after that the tab is the source. */
 const TRADES = [['1036', 'Mobilize & Startup Site Protection'], ['1050', 'Site Supervisor'], ['2001', 'Hazardous Demolition'], ['2006', 'Demolition'],
@@ -124,7 +125,7 @@ function withLock_(fn) {
 function setup() { CacheService.getScriptCache().remove('schema'); upgrade_(); return 'Sheet is up to date.'; }
 function upgrade_() {
   const cache = CacheService.getScriptCache();
-  if (cache.get('schema') === '8') return;
+  if (cache.get('schema') === '9') return;
   withLock_(() => {
     const ss = SpreadsheetApp.getActive();
     // Users
@@ -181,11 +182,15 @@ function upgrade_() {
     if (!props.getProperty('READABLE_V1')) { try { readableUpgrade_(ss); props.setProperty('READABLE_V1', 'done'); } catch (e) { props.setProperty('READABLE_V1', 'error: ' + e.message); } }
     if (!props.getProperty('STONE_V1')) { try { stoneUpgrade_(ss); props.setProperty('STONE_V1', 'done'); } catch (e) { props.setProperty('STONE_V1', 'error: ' + e.message); } }
     if (!props.getProperty('RESTORE_T112_V1')) { try { restoreHidden_(ss, 'JMVICS4598Q', 't112', 'Mitsuko'); } catch (e) { } props.setProperty('RESTORE_T112_V1', 'done'); }
+    // new checklist 3 (owner request 2026-10-28): old 3–6 become 4–7. Marked first so it can never run twice.
+    if (!props.getProperty('PHASES_V1')) { props.setProperty('PHASES_V1', 'started');
+      try { props.setProperty('PHASES_V1_REPORT', JSON.stringify(phasesUpgrade_(ss))); props.setProperty('PHASES_V1', 'done'); } catch (e) { props.setProperty('PHASES_V1', 'error: ' + e.message); } }
+    if (!props.getProperty('GROUNDWORK_REPORT_V1')) { try { groundworkReport_(ss); } catch (e) { /* report is optional */ } props.setProperty('GROUNDWORK_REPORT_V1', 'done'); }
     if (!props.getProperty('PARK_REPORT_V1')) { try { cleanupReport_(ss, 'Park', 'Mitsuko', 'Park Cleanup'); } catch (e) { /* report is optional */ } props.setProperty('PARK_REPORT_V1', 'done'); }
     if (itemsUpgraded || props.getProperty('SETUP_TEXT') !== SETUP_TEXT_VERSION) {
       try { writeSetupTab_(ss); props.setProperty('SETUP_TEXT', SETUP_TEXT_VERSION); } catch (e) { /* instructions tab is optional */ }
     }
-    cache.put('schema', '8', 21600);
+    cache.put('schema', '9', 21600);
   });
 }
 /* Trade codes: creates the Trades tab, then (once) moves items off retired trades.
@@ -439,6 +444,65 @@ function readableUpgrade_(ss) {
     });
   });
 }
+/* One-time (owner request 2026-10-28): new checklist 3 "Groundwork & Slab Prep" after Demolition.
+ * Every Checklist number 3–6 moves up one (Items, Job Items, Check Log, Notes), including hidden-checklist
+ * rows (ItemID L3 → L4 …), so ticks, notes, job edits and hidden checklists stay with their tasks.
+ * Edit Log is history and is left as written. Reads the sheet directly (called from upgrade_). */
+function phasesUpgrade_(ss) {
+  const counts = {};
+  ['Items', 'Job Items', 'Check Log', 'Notes'].forEach(tab => {
+    const sh = ss.getSheetByName(tab);
+    if (!sh || sh.getLastRow() < 2) return;
+    const hd = head_(sh), cc = hd.indexOf('Checklist'), ic = hd.indexOf('ItemID'), tc = hd.indexOf('Task'), ty = hd.indexOf('Type');
+    if (cc < 0) return;
+    const v = sh.getRange(2, 1, sh.getLastRow() - 1, hd.length).getValues();
+    let n = 0;
+    v.forEach(r => {
+      const c = r[cc];
+      if (c === '' || c === null || isNaN(Number(c))) return;
+      const k = Number(c);
+      if (!(Number.isInteger(k) && k >= 3 && k <= 6)) return;
+      r[cc] = k + 1; n++;
+      if (ty >= 0 && String(r[ty]).trim().toUpperCase() === 'LIST' && ic >= 0 && String(r[ic]) === 'L' + k) {
+        r[ic] = 'L' + (k + 1);
+        if (tc >= 0) r[tc] = 'Checklist ' + (k + 1) + ' – ' + LIST_NAMES[k + 1];
+      }
+    });
+    if (n) sh.getRange(2, 1, v.length, hd.length).setValues(v);
+    counts[tab] = n;
+  });
+  ensureEditLog_();
+  append_('Edit Log', { 'Timestamp': new Date(), 'Name': 'Setup (new checklist)', 'JobID': '(all jobs)', 'ItemID': '', 'Field': 'Checklists renumbered',
+    'Old Value': '3 Pre-Rough In · 4 Rough In & Pre-Drywall · 5 Drywall · 6 Finishing',
+    'New Value': '3 Groundwork & Slab Prep (new) · 4 ' + LIST_NAMES[4] + ' · 5 ' + LIST_NAMES[5] + ' · 6 Drywall · 7 Finishing' });
+  return counts;
+}
+/* Read-only list for the owner (2026-10-28): tasks that may belong in checklist 3 Groundwork & Slab Prep.
+ * Writes the "Groundwork Review" tab. Moves nothing. */
+const GROUNDWORK_WORDS = /\b(slabs?|under[- ]?slab|footings?|excavat\w*|dig|digging|trench\w*|backfill\w*|compact\w*|gravel|crush\w*|foundations?|vapou?r barrier|radon|rebar|formwork|forms|pour\w*|concrete|grade|grading|perimeter drain\w*|drain tile|weeping tile|sump|sewer|water service|geotech\w*|crawl ?space|damp ?proof\w*|waterproof\w*|parg\w*|xps)\b/i;
+function groundworkReport_(ss) {
+  const jobs = {}; raw_('Jobs').forEach(r => { jobs[String(r['JobID'])] = String(r['Job Name']); });
+  const lbl = n => (n >= 0 && LIST_NAMES[n] !== undefined ? n + ' ' + LIST_NAMES[n] : '');
+  const found = [];
+  const look = (where, r) => {
+    const text = String(r['Item'] || ''), trade = String(r['Trade'] || '');
+    const m = GROUNDWORK_WORDS.exec(text) || (/concrete/i.test(trade) ? ['trade: ' + trade] : null);
+    if (!m || !text.trim()) return;
+    found.push([where, cl_(r['Checklist']), trade, text, m[0], String(r['ItemID'])]);
+  };
+  raw_('Items').forEach(r => { if (String(r['ItemID']).trim() && !(String(r['Active']).trim() && !yes_(r['Active']))) look('All jobs (master list)', r); });
+  raw_('Job Items').forEach(r => { if (String(r['Type']).trim().toUpperCase() === 'ITEM' && !yes_(r['Removed'])) look('Only on job: ' + (jobs[String(r['JobID'])] || r['JobID']), r); });
+  found.sort((a, b) => (a[1] - b[1]) || a[2].localeCompare(b[2]) || a[3].localeCompare(b[3]));
+  const out = [['POSSIBLE GROUNDWORK & SLAB PREP TASKS – review only, nothing has been moved', '', '', '', '', ''],
+    ['Made ' + Utilities.formatDate(new Date(), TZ, 'MMM d, yyyy h:mm a') + '. Tasks whose wording mentions slab, footing, excavation, drainage, gravel, concrete etc. (or are under the Concrete trade). Tell Claude which ones to move to checklist 3.', '', '', '', '', ''],
+    ['', '', '', '', '', ''],
+    ['Where', 'Checklist now', 'Trade', 'Task', 'Matched', 'ItemID']].concat(found.length ? found.map(f => [f[0], lbl(f[1]), f[2], f[3], f[4], f[5]]) : [['(none found)', '', '', '', '', '']]);
+  let sh = ss.getSheetByName('Groundwork Review');
+  if (!sh) sh = ss.insertSheet('Groundwork Review'); else sh.clear();
+  sh.getRange(1, 1, out.length, 6).setValues(out);
+  try { sh.getRange(1, 1).setFontWeight('bold'); sh.setFrozenRows(4); } catch (e) { }
+  return found.length;
+}
 /* One-time (owner request 2026-10-23): the trade "Stone Countertops" is called "Stone" (code 12370). */
 function stoneUpgrade_(ss) {
   const tr = ss.getSheetByName('Trades');
@@ -473,7 +537,7 @@ function writeSetupTab_(ss) {
     'WHO CAN SIGN IN',
     'People on the Users tab, with their Name and PIN. Active must start with Y to allow sign-in (blank or N blocks, immediately). Admin starting with Y lets that person add items to the master list from the app. Everyone can edit or remove any task in the app, but only for the job they are on; every change is in Edit Log. To change a master-list task on every job, edit it here on the Items tab. A name is locked for 15 minutes after 5 wrong PINs. Sign-ins last 30 days on each phone.', '',
     'CHECKLISTS (the Checklist column on Items)',
-    '0 Project management to do (admins only – nobody else sees it, its tasks, ticks or notes) · 1 Project Startup & Site Protection · 2 Demolition · 3 Pre-Rough In · 4 Rough In & Pre-Drywall · 5 Drywall · 6 Finishing', '',
+    '0 Project management to do (admins only – nobody else sees it, its tasks, ticks or notes) · 1 Project Startup & Site Protection · 2 Demolition · 3 Groundwork & Slab Prep · 4 Prep: Framing & Trades Rough In · 5 Pre-Drywall Review: Framing & Trades Rough In · 6 Drywall · 7 Finishing', '',
     'TABS',
     'Users – the authorised list (Name | PIN | Active | Admin).',
     'Items – the master checklist every job uses. Critical = CRITICAL marks a stop-point item. Set Active = N to retire an item. Do not change ItemID.',

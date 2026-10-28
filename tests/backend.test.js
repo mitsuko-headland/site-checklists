@@ -13,7 +13,7 @@ const sheets={
  'Jobs':mkSheet(['JobID','Job Name','Address','Created By','Created At','Active'],[['J1','Old Job','1 St','Mark',new Date(),'Y']]),
  'Job Items':mkSheet(['JobID','ItemID','Type','Walk','Trade','Area','Hold','Item','Added By','Added At','Removed'],[['J1','X1','Item',1,'Plumbing','','HOLD','Job extra','Mark',new Date(),''],['J1','X2','Item',2,'Siding','','','Siding nailed','Mark',new Date(),'']]),
  'Check Log':mkSheet(['JobID','ItemID','Walk','Status','Name','Timestamp'],[['J1','t001',2,'Done','Mark',new Date()]])};
-const props={READABLE_V1:'done',STONE_V1:'done'},cache={};   // readable columns + Stone are tested at the end, so earlier column positions stay put
+const props={READABLE_V1:'done',STONE_V1:'done',PHASES_V1:'done',GROUNDWORK_REPORT_V1:'done'},cache={};   // readable columns + Stone are tested at the end, so earlier column positions stay put
 const ctx={SpreadsheetApp:{getActive:()=>({getSheetByName:n=>sheets[n]||null,insertSheet:n=>{sheets[n]=mkSheet([],[]);sheets[n].data.length=0;sheets[n].setFrozenRows=()=>{};return sheets[n];}})},
  PropertiesService:{getScriptProperties:()=>({getProperty:k=>props[k]||null,setProperty:(k,v)=>props[k]=v})},
  CacheService:{getScriptCache:()=>({get:k=>cache[k]??null,put:(k,v)=>cache[k]=v,remove:k=>delete cache[k]})},
@@ -21,7 +21,7 @@ const ctx={SpreadsheetApp:{getActive:()=>({getSheetByName:n=>sheets[n]||null,ins
  Utilities:{getUuid:()=>crypto.randomUUID(),computeHmacSha256Signature:(p,s)=>[...crypto.createHmac('sha256',s).update(p).digest()],
   base64EncodeWebSafe:x=>Buffer.from(typeof x==='string'?x:Buffer.from(x.map(b=>b&255))).toString('base64').replace(/\+/g,'-').replace(/\//g,'_'),
   base64DecodeWebSafe:s=>[...Buffer.from(s.replace(/-/g,'+').replace(/_/g,'/'),'base64')],newBlob:b=>({getDataAsString:()=>Buffer.from(b.map(x=>x&255)).toString()}),formatDate:d=>d.toISOString().slice(5,16)}};
-const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup,cleanupReport_,cleanupRun_,setListHidden,restoreHidden_,readableUpgrade_,stoneUpgrade_};')(...Object.values(ctx));
+const A=new Function(...Object.keys(ctx),code+';return {editItem,setup,login,whoAmI,getJobs,createJob,getJob,setCheck,addItems,removeItem,addNote,startup,cleanupReport_,cleanupRun_,setListHidden,restoreHidden_,readableUpgrade_,stoneUpgrade_,phasesUpgrade_,groundworkReport_};')(...Object.values(ctx));
 const ok=(c,m)=>{if(!c){console.log('FAIL',m);process.exitCode=1}else console.log('ok',m)};
 // login before PINs exist -> rejected, but upgrade runs
 try{A.login('Mark Ellis','1');ok(false,'no pin')}catch(e){console.log('   msg:',e.message);ok(/not recognised/.test(e.message),'no PIN yet -> rejected')}
@@ -214,7 +214,7 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  ok(CL.slice(1).every(r=>r[ci('Job Name')]===(sheets['Jobs'].data.find(j=>j[0]===r[ci('JobID')])||[])[1]),'existing Check Log rows filled with the job name');
  ok(CL.slice(1).some(r=>r[ci('ItemID')]==='t001'&&r[ci('Task')]==='Backing installed'),'existing rows filled with the task wording');
  const EL=sheets['Edit Log'].data,ei=c=>hd('Edit Log').indexOf(c);
- ok(EL.slice(1).some(r=>r[ei('JobID')]==='(all jobs)'&&r[ei('Job Name')]==='All jobs')&&EL.slice(1).some(r=>/^Checklist 5/.test(r[ei('ItemID')])&&r[ei('Task')]==='Checklist 5 – Drywall'),'"(all jobs)" and checklist rows get readable labels');
+ ok(EL.slice(1).some(r=>r[ei('JobID')]==='(all jobs)'&&r[ei('Job Name')]==='All jobs')&&EL.slice(1).some(r=>/^Checklist 5/.test(r[ei('ItemID')])&&r[ei('Task')]==='Checklist 5 – Pre-Drywall Review: Framing & Trades Rough In'),'"(all jobs)" and checklist rows get readable labels');
  A.readableUpgrade_(ss);ok(hd('Check Log').filter(c=>c==='Job Name').length===1,'running it again adds no extra columns');
  const J=A.createJob(ta,'Butt','');A.setCheck(ta,J.id,'t001',4,'Done');
  const last=sheets['Check Log'].data.slice(-1)[0];ok(last[ci('Job Name')]==='Butt'&&last[ci('Task')]==='Backing installed'&&last[ci('Status')]==='Done','new ticks are written with job name and task');
@@ -283,6 +283,34 @@ ok(!A.getJob(t2,j.id).items.some(i=>i.text==='Extra blocking for TV'),'job-only 
  [J,K,L].forEach(j=>{const it=A.getJob(ta,j.id).items.find(i=>i.id==='t002');ok(it.text==='New master wording'&&it.list===3&&!it.edited,'every job shows the new version: '+j.name);});
  const EL=sheets['Edit Log'].data,eh=c=>EL[0].indexOf(c);
  ok(EL.some(r=>r[eh('JobID')]===K.id&&r[eh('Field')]==='Job version replaced (all-jobs edit)'&&/B own wording/.test(r[eh('Old Value')])&&/kitchen/.test(r[eh('Old Value')])),'job B\'s replaced version is kept in Edit Log');
- ok(EL.some(r=>r[eh('JobID')]==='(all jobs)'&&r[eh('Field')]==='Wording'&&r[eh('New Value')]==='New master wording'&&r[eh('Name')]==='Mark Ellis')&&EL.some(r=>r[eh('JobID')]==='(all jobs)'&&r[eh('Field')]==='Checklist'&&r[eh('New Value')]==='3 Pre-Rough In'),'all-jobs changes logged with who');
+ ok(EL.some(r=>r[eh('JobID')]==='(all jobs)'&&r[eh('Field')]==='Wording'&&r[eh('New Value')]==='New master wording'&&r[eh('Name')]==='Mark Ellis')&&EL.some(r=>r[eh('JobID')]==='(all jobs)'&&r[eh('Field')]==='Checklist'&&r[eh('New Value')]==='3 Groundwork & Slab Prep'),'all-jobs changes logged with who');
  ok(A.editItem(ta,J.id,'t002','m',{text:'New master wording',trade:m0.trade,area:'',critical:true,list:3,global:true})===0,'same values again = no change');
  ok(A.editItem(ta,J.id,'t002','m',{text:'Local only',trade:m0.trade,area:'',critical:true})===1&&row()[ix('Item')]==='New master wording'&&A.getJob(ta,K.id).items.find(i=>i.id==='t002').text==='New master wording','box not ticked = this job only, master unchanged');}
+
+// 2026-10-28: new checklist 3 Groundwork & Slab Prep – old 3–6 move to 4–7 on every tab; Edit Log untouched
+{const T={
+  'Items':mkSheet(['ItemID','Checklist','Trade','Item'],[['a',0,'X','zero'],['b',2,'X','demo'],['c',3,'X','pre'],['d',4,'X','rough'],['e',5,'X','dry'],['f',6,'X','fin'],['g','','X','blank']]),
+  'Job Items':mkSheet(['JobID','Job Name','ItemID','Task','Type','Checklist','Item','Removed'],[['J','Jn','x1','t','Item',3,'own',''],['J','Jn','L4','Checklist 4 – Rough In & Pre-Drywall','LIST',4,'',''],['J','Jn','L2','Checklist 2 – Demolition','LIST',2,'',''],['J','Jn','d','rough','EDIT',6,'moved','']]),
+  'Check Log':mkSheet(['JobID','ItemID','Checklist','Status'],[['J','c',3,'Done'],['J','b',2,'Done'],['J','f',6,'Done']]),
+  'Notes':mkSheet(['JobID','ItemID','Checklist','Note'],[['J','e',5,'n'],['J','a',0,'n0']])};
+ const ss={getSheetByName:n=>T[n]||null};
+ const elBefore=sheets['Edit Log'].data.length;
+ const cnt=A.phasesUpgrade_(ss);
+ ok(T['Items'].data.slice(1).map(r=>r[1]).join()==='0,2,4,5,6,7,','Items: 0–2 and blank stay, 3–6 become 4–7');
+ ok(T['Job Items'].data[1][5]===4&&T['Job Items'].data[4][5]===7,'Job Items: job-only task and EDIT checklist moved');
+ ok(T['Job Items'].data[2][2]==='L5'&&T['Job Items'].data[2][5]===5&&T['Job Items'].data[2][3]==='Checklist 5 – Pre-Drywall Review: Framing & Trades Rough In','hidden checklist row moves with it (L4 → L5, label updated)');
+ ok(T['Job Items'].data[3][2]==='L2'&&T['Job Items'].data[3][5]===2,'hidden Demolition row unchanged');
+ ok(T['Check Log'].data.slice(1).map(r=>r[2]).join()==='4,2,7'&&T['Notes'].data.slice(1).map(r=>r[2]).join()==='6,0','Check Log and Notes renumbered');
+ ok(cnt['Items']===4&&cnt['Job Items']===3&&cnt['Check Log']===2&&cnt['Notes']===1,'counts reported');
+ const EL=sheets['Edit Log'].data,eh=c=>EL[0].indexOf(c);ok(EL.length===elBefore+1&&EL[EL.length-1][eh('Field')]==='Checklists renumbered','one Edit Log line records the renumber');
+ // real sheet: the upgrade runs once only
+ delete props['PHASES_V1'];delete cache['schema'];const IC=sheets['Items'].data[0].indexOf('Checklist'),snap=sheets['Items'].data.map(r=>r[IC]).join();A.setup();
+ const after=sheets['Items'].data.map(r=>r[IC]).join();ok(props['PHASES_V1']==='done'&&after!==snap,'upgrade runs from setup and is marked done');
+ delete cache['schema'];A.setup();ok(sheets['Items'].data.map(r=>r[IC]).join()===after,'second run changes nothing');}
+// read-only groundwork list
+{const I=sheets['Items'].data,h=I[0],row=h.map(c=>({ItemID:'g1',Checklist:4,Trade:'Concrete',Item:'Gravel compacted under slab',Active:'Y'})[c]??'');I.push(row);
+ const row2=h.map(c=>({ItemID:'g2',Checklist:6,Trade:'Drywall',Item:'Tape and mud',Active:'Y'})[c]??'');I.push(row2);
+ const before=JSON.stringify(I);const n=A.groundworkReport_(SpreadsheetApp_());
+ const G=sheets['Groundwork Review'].data;ok(n>=1&&G.some(r=>r[3]==='Gravel compacted under slab'&&r[1]==='4 Prep: Framing & Trades Rough In'&&r[5]==='g1'),'slab task listed with its current checklist');
+ ok(!G.some(r=>r[3]==='Tape and mud'),'unrelated task not listed');ok(JSON.stringify(I)===before,'review list moves nothing');}
+function SpreadsheetApp_(){return ctx.SpreadsheetApp.getActive();}
